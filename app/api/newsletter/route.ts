@@ -1,11 +1,11 @@
-import { NewsletterAPI } from 'pliny/newsletter'
-import siteMetadata from '@/data/siteMetadata'
+import { NextResponse } from 'next/server'
 
 export const dynamic = 'force-static'
 
-const handler = NewsletterAPI({
-  // @ts-ignore
-  provider: siteMetadata.newsletter.provider,
-})
+export function GET() {
+  return NextResponse.json({ message: 'Newsletter not configured' }, { status: 404 })
+}
 
-export { handler as GET, handler as POST }
+export function POST() {
+  return NextResponse.json({ message: 'Newsletter not configured' }, { status: 404 })
+}
