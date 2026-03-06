@@ -1,0 +1,53 @@
+---
+title: 'Setting Up OpenClaw (ClawdBot) on Docker — The Easy & Safe Way'
+date: '2026-03-07'
+tags: ['cybersecurity', 'docker', 'ai', 'tools']
+draft: false
+layout: PostSimple
+summary: 'Using ClawdBot directly could be very dangerous, so we can run it on Docker to control what it controls. In this blog, we discuss the easiest and safest way to setup ClawdBot (OpenClaw) on Docker.'
+---
+
+Using ClawdBot directly could be very dangerous, so we can run it on Docker to control what it controls.
+In this blog, we'll be discussing the easiest and safest way to setup ClawdBot (OpenClaw) on Docker.
+
+To make it very easy, we'll be using the following repository which helps us install ClawdBot with just a one-liner command:
+
+[https://github.com/phioranex/openclaw-docker](https://github.com/phioranex/openclaw-docker)
+
+![OpenClaw Docker Repository](/static/images/openclaw-docker-setup/image-0.png)
+
+Copy the command and paste it on your terminal as follows:
+
+![Running the install command](/static/images/openclaw-docker-setup/image-1.png)
+
+This will look for all the dependencies. If any isn't installed, it'll install it as per requirements. It'll also pull the Docker image for you so you don't have to.
+
+![Dependency check](/static/images/openclaw-docker-setup/image-2.png)
+
+![Pulling the Docker image](/static/images/openclaw-docker-setup/image-3.png)
+
+It lets you choose from multiple models. You can use any of them or the one available with you.
+
+**P.S:** I used Qwen.
+
+![Model selection](/static/images/openclaw-docker-setup/image-4.png)
+
+Visit the site link highlighted and it'll automatically approve your instance on the Qwen dashboard, or you'll be prompted to input a code which I provided.
+
+![Qwen approval](/static/images/openclaw-docker-setup/image-5.png)
+
+We'll skip this for now since we are not setting it up for anything mentioned above, and a few other settings that we don't need.
+
+![Skipping optional settings](/static/images/openclaw-docker-setup/image-6.png)
+
+![Additional configuration](/static/images/openclaw-docker-setup/image-7.png)
+
+After that, the installation will be complete and you can open OpenClaw on your localhost with the token.
+
+To get your token, navigate to:
+
+```
+/home/kali/.openclaw/openclaw.json
+```
+
+![OpenClaw running on localhost](/static/images/openclaw-docker-setup/image-8.png)
