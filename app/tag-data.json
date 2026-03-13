@@ -1,4 +1,13 @@
 {
-  "shellvoide": 1,
-  "cybersecurity": 1
+  "aws": 1,
+  "client-vpn": 1,
+  "sso": 1,
+  "iam-identity-center": 1,
+  "network-security": 1,
+  "cybersecurity": 1,
+  "docker": 1,
+  "ai": 1,
+  "openclaw": 1,
+  "tools": 1,
+  "self-hosting": 1
 }
