@@ -1,10 +1,10 @@
-﻿---
+---
 title: 'AWS Client VPN with SSO (Interactive Setup Guide)'
 date: '2026-03-13'
 tags: ['aws', 'client-vpn', 'sso', 'iam-identity-center', 'network-security']
 draft: false
 layout: PostSimple
-summary: 'Set up AWS Client VPN with IAM Identity Center SSO, including self-service portal, SAML providers, group-based authorization, and end-user connection flow.'
+summary: 'Interactive guide to set up AWS Client VPN with IAM Identity Center SSO.'
 ---
 
 AWS Client VPN is a managed, OpenVPN-based remote access service that lets users securely connect to private AWS networks from anywhere. It is designed for teams that need controlled access to internal workloads without exposing private resources directly to the internet.
@@ -134,8 +134,8 @@ Leave **Application Start URL** and **Relay State** empty for now, then submit.
 
 Open **Actions -> Edit attribute mappings** and add:
 
-- Subject -> ${user:email} with type `emailAddress`
-- `memberOf` -> `${user:groups}` with type `unspecified`
+- Subject -> `\${user:email}` with type `emailAddress`
+- `memberOf` -> `\${user:groups}` with type `unspecified`
 
 ![Edit Attribute Mappings](/static/images/client-vpn-sso/image-8.png)
 ![Client VPN Attribute Mappings](/static/images/client-vpn-sso/image-9.png)
@@ -180,8 +180,8 @@ Submit.
 
 Add the same attribute mappings as Step 1:
 
-- Subject -> `${user:email}` type `emailAddress`
-- `memberOf` -> `${user:groups}` type `unspecified`
+- Subject -> `\${user:email}` type `emailAddress`
+- `memberOf` -> `\${user:groups}` type `unspecified`
 
 ![Self Service Edit Mapping](/static/images/client-vpn-sso/image-14.png)
 ![Self Service Attribute Mapping Values](/static/images/client-vpn-sso/image-15.png)
