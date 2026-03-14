@@ -99,6 +99,7 @@ Click **Add application**.
 Choose **I have an application I want to set up** and select **SAML 2.0**.
 
 ![Choose SAML 2.0](/static/images/client-vpn-sso/image-2.png)
+
 ![Choose SAML 2.0 Confirmation](/static/images/client-vpn-sso/image-3.png)
 
 Set:
@@ -138,6 +139,7 @@ Open **Actions -> Edit attribute mappings** and add:
 - `memberOf` -> `\${user:groups}` with type `unspecified`
 
 ![Edit Attribute Mappings](/static/images/client-vpn-sso/image-8.png)
+
 ![Client VPN Attribute Mappings](/static/images/client-vpn-sso/image-9.png)
 
 Checkpoint: Your `Client VPN` SAML app exists with the two mappings above.
@@ -154,6 +156,7 @@ Set:
 - Description: `Application for AWS Client VPN self service portal authenticated with SSO`
 
 ![Self Service App Config](/static/images/client-vpn-sso/image-10.png)
+
 ![Self Service App Config 2](/static/images/client-vpn-sso/image-11.png)
 
 Use the same IP stack (IPv4 in this guide) and download this app's SAML metadata file as well.
@@ -184,6 +187,7 @@ Add the same attribute mappings as Step 1:
 - `memberOf` -> `\${user:groups}` type `unspecified`
 
 ![Self Service Edit Mapping](/static/images/client-vpn-sso/image-14.png)
+
 ![Self Service Attribute Mapping Values](/static/images/client-vpn-sso/image-15.png)
 
 Checkpoint: Both SAML apps are created and mapped consistently.
@@ -247,11 +251,17 @@ Recommended endpoint settings:
   - Disconnect on session timeout enabled
 
 ![Endpoint Config 1](/static/images/client-vpn-sso/image-20.png)
+
 ![Endpoint Config 2](/static/images/client-vpn-sso/image-21.png)
+
 ![Endpoint Config 3](/static/images/client-vpn-sso/image-22.png)
+
 ![Endpoint Config 4](/static/images/client-vpn-sso/image-23.png)
+
 ![Endpoint Config 5](/static/images/client-vpn-sso/image-24.png)
+
 ![Endpoint Config 6](/static/images/client-vpn-sso/image-25.png)
+
 ![Endpoint Config 7](/static/images/client-vpn-sso/image-26.png)
 
 Create the endpoint. It starts in `pending` state.
@@ -281,6 +291,7 @@ Checkpoint: At least one subnet association is active.
 In IAM Identity Center, create a group for VPN users.
 
 ![Create Group Start](/static/images/client-vpn-sso/image-29.png)
+
 ![Create Group Details](/static/images/client-vpn-sso/image-30.png)
 
 Open the group and copy its group ID.
