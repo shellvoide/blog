@@ -1,0 +1,76 @@
+---
+title: 'Kali Blinking Cursor Fix on Boot (VMware/VirtualBox)'
+date: '2026-03-16'
+tags: ['kali', 'linux', 'virtualbox', 'vmware', 'troubleshooting']
+draft: false
+layout: PostSimple
+summary: 'Stuck at a blinking cursor after booting Kali in a VM? Use a TTY switch and a single command to bring the desktop back in under a minute.'
+---
+
+## The Problem in One Line
+
+You boot Kali in a VM, the screen goes black, and a lonely blinking cursor just sits there like it owns the place.
+
+![Blinking cursor on boot](/static/images/kali-cursor-fix/image-0.png)
+
+I hit this for ages and kept reinstalling like it was my job. It turns out the fix is tiny. Here is the short version, then we will walk it calmly step by step.
+
+---
+
+## The 60-Second Fix
+
+1. Switch to a TTY login screen with `Ctrl` + `Alt` + `F2` (or `F3`, `F4`, `F12` depending on your laptop).
+2. Log in.
+3. Run `sudo startx` and enter your password.
+
+That is it. If you want the full walk-through with screenshots, keep going.
+
+---
+
+## Step 1: Jump to a TTY
+
+When the cursor shows up, press `Ctrl` + `Alt` + `F2` (if that does not work, try `F3` or `F12`).
+
+![Switching to TTY](/static/images/kali-cursor-fix/image-1.png)
+
+You should land on a text login screen.
+
+---
+
+## Step 2: Log In
+
+Use your usual Kali username and password.
+
+![TTY login prompt](/static/images/kali-cursor-fix/image-2.png)
+
+Once you log in, you will see a terminal prompt.
+
+---
+
+## Step 3: Start the Desktop Manually
+
+Run this command:
+
+```bash
+sudo startx
+```
+
+Then enter your password again.
+
+![Running startx](/static/images/kali-cursor-fix/image-3.png)
+
+---
+
+## Back to the Desktop
+
+Your GUI should load normally.
+
+![Kali desktop restored](/static/images/kali-cursor-fix/image-4.png)
+
+---
+
+## Why This Works (Short Version)
+
+The blinking cursor usually means the display manager did not finish starting the desktop session. `startx` manually kicks off the graphical session and gets you back in immediately.
+
+If the issue comes back after reboot, this fix still works, but it can be a sign that the display manager needs a deeper look. For now, this gets you unstuck fast.
