@@ -135,7 +135,8 @@
     }
   }
 
-  .prose-invert {
+  .prose-invert,
+  .dark .prose {
     & a {
       color: var(--color-primary-500);
 
