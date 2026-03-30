@@ -69,6 +69,99 @@ The GUI should load normally.
 
 ---
 
+## Permanent Fix: Expand Storage Inside Kali (After VM Disk Resize)
+
+If you increased disk size in VMware/VirtualBox but did not expand partitions/filesystem inside Kali, the system can still hit low disk space and fail to start the desktop reliably.
+
+Use this terminal workflow to fix it permanently.
+
+### 1) Check Current Disk, Partition, and Filesystem State
+
+```bash
+$ df -h
+$ lsblk -f
+```
+
+If `/` is still small (for example 20G) even though the VM disk is larger, continue.
+
+### 2) Install `growpart`
+
+```bash
+$ sudo apt update
+$ sudo apt install -y cloud-guest-utils
+```
+
+### 3) Expand the Root Partition
+
+Most Kali VM installs use `/dev/sda` and root on partition `2`.
+
+```bash
+$ sudo growpart /dev/sda 2
+```
+
+### 4) Expand the Filesystem (Non-LVM)
+
+For ext4 root filesystems:
+
+```bash
+$ sudo resize2fs /dev/sda2
+```
+
+For XFS root filesystems:
+
+```bash
+$ sudo xfs_growfs -d /
+```
+
+### 5) Verify New Size
+
+```bash
+$ df -h /
+$ lsblk
+```
+
+### 6) Reboot
+
+```bash
+$ sudo reboot
+```
+
+---
+
+## If Your Kali Uses LVM
+
+Check whether you have LVM:
+
+```bash
+$ lsblk -f
+```
+
+If you see `LVM2_member`, use this path after `growpart`:
+
+```bash
+$ sudo pvresize /dev/sda3
+$ sudo lvextend -r -l +100%FREE /dev/mapper/kali--vg-root
+```
+
+Verify:
+
+```bash
+$ df -h /
+```
+
+---
+
+## Quick Cleanup If Space Is Still Tight
+
+```bash
+$ sudo apt clean
+$ sudo journalctl --vacuum-time=7d
+```
+
+This prevents the blinking-cursor boot issue from coming back when the root filesystem fills up again.
+
+---
+
 ## Why This Works (Short Version)
 
 The blinking cursor typically means the display manager did not finish starting the desktop session. `startx` manually starts the graphical session and restores the desktop.
