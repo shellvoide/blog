@@ -140,3 +140,90 @@
 .token.table {
   display: inline;
 }
+
+/* Theme-aware readability overrides for code tokens */
+.prose .token.comment,
+.prose .token.prolog,
+.prose .token.cdata {
+  color: rgb(92, 104, 120);
+}
+
+.prose .token.punctuation {
+  color: rgb(74, 85, 104);
+}
+
+.prose .token.tag,
+.prose .token.operator,
+.prose .token.keyword,
+.prose .token.atrule,
+.prose .token.title {
+  color: rgb(13, 116, 106);
+}
+
+.prose .token.symbol,
+.prose .token.property,
+.prose .token.number,
+.prose .token.boolean,
+.prose .token.constant,
+.prose .token.function,
+.prose .token.builtin,
+.prose .token.class-name {
+  color: rgb(30, 64, 175);
+}
+
+.prose .token.string,
+.prose .token.url,
+.prose .token.attr-value,
+.prose .token.inserted {
+  color: rgb(21, 128, 61);
+}
+
+.prose .token.regex,
+.prose .token.variable,
+.prose .token.important,
+.prose .token.bold {
+  color: rgb(55, 65, 81);
+}
+
+.dark .prose .token.comment,
+.dark .prose .token.prolog,
+.dark .prose .token.cdata {
+  color: rgb(132, 148, 148);
+}
+
+.dark .prose .token.punctuation {
+  color: rgb(176, 192, 204);
+}
+
+.dark .prose .token.tag,
+.dark .prose .token.operator,
+.dark .prose .token.keyword,
+.dark .prose .token.atrule,
+.dark .prose .token.title {
+  color: rgb(95, 211, 186);
+}
+
+.dark .prose .token.symbol,
+.dark .prose .token.property,
+.dark .prose .token.number,
+.dark .prose .token.boolean,
+.dark .prose .token.constant,
+.dark .prose .token.function,
+.dark .prose .token.builtin,
+.dark .prose .token.class-name {
+  color: rgb(130, 170, 255);
+}
+
+.dark .prose .token.string,
+.dark .prose .token.url,
+.dark .prose .token.attr-value,
+.dark .prose .token.inserted {
+  color: rgb(166, 222, 135);
+}
+
+.dark .prose .token.regex,
+.dark .prose .token.variable,
+.dark .prose .token.important,
+.dark .prose .token.bold {
+  color: rgb(210, 221, 232);
+}
