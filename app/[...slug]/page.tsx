@@ -38,6 +38,13 @@ export async function generateMetadata(props: {
   const publishedAt = new Date(post.date).toISOString()
   const modifiedAt = new Date(post.lastmod || post.date).toISOString()
   const authors = authorDetails.map((author) => author.name)
+  const canonicalUrl = post.canonicalUrl || `${siteMetadata.siteUrl}/${post.slug}`
+  const keywords = [
+    ...(post.tags || []),
+    ...(post.tags?.includes('jwt-security')
+      ? ['jwt', 'jwt security', 'jwt vulnerabilities', 'jwt attacks']
+      : []),
+  ]
   let imageList = [siteMetadata.socialBanner]
   if (post.images) {
     imageList = typeof post.images === 'string' ? [post.images] : post.images
@@ -51,6 +58,10 @@ export async function generateMetadata(props: {
   return {
     title: post.title,
     description: post.summary,
+    keywords,
+    alternates: {
+      canonical: canonicalUrl,
+    },
     openGraph: {
       title: post.title,
       description: post.summary,
@@ -59,7 +70,7 @@ export async function generateMetadata(props: {
       type: 'article',
       publishedTime: publishedAt,
       modifiedTime: modifiedAt,
-      url: './',
+      url: canonicalUrl,
       images: ogImages,
       authors: authors.length > 0 ? authors : [siteMetadata.author],
     },
