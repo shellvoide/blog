@@ -1,0 +1,246 @@
+---
+title: "Blockchain Fundamentals: A Security Engineer's Mental Model"
+summary: "A ground-up blockchain explainer built for security engineers — covering cryptographic primitives, block structure, consensus mechanisms, the Web3 tooling landscape, transaction anatomy, and why Web3 security is one of the most interesting fields in infosec right now."
+date: '2026-04-08'
+lastmod: '2026-04-08'
+authors: ['default']
+tags: ['blockchain', 'web3-security', 'cryptography', 'ethereum', 'smart-contracts', 'infosec']
+draft: false
+layout: PostSimple
+canonicalUrl: 'https://shellvoide.com/blog/blockchain-fundamentals-a-security-engineers-mental-model'
+---
+
+Most blockchain explainers I've come across either drown you in crypto-bro marketing or throw you straight into Solidity without any foundation. Neither worked for me. So I built my own mental model from the ground up — the way I'd want it explained as someone who already understands hashing, PKI, and threat modeling, and just wants to know what's *actually* going on under the hood.
+
+If that sounds like you, good. By the end of this, you should be able to read any block explorer fluently and understand why Web3 security is one of the most interesting corners of infosec right now. I'm also keeping this around as a reference for myself — a cheat sheet I can come back to when the details get fuzzy.
+
+Let's get into it.
+
+---
+
+## 1. What Problem Does Blockchain Actually Solve?
+
+Here's the core question blockchain answers: **how do mutually distrusting parties agree on a shared ledger without a trusted third party?**
+
+Banks solve this by *being* the trusted party. Blockchain takes a different route entirely. It makes the ledger:
+
+1. **Append-only** — you can't rewrite history
+2. **Cryptographically verifiable** — anyone can check it
+3. **Replicated** across thousands of nodes — no single point of compromise
+4. **Governed by consensus rules** — everyone agrees on what "valid" means
+
+Now here's the part most people gloss over — the tradeoff. Integrity and availability are maximized, but at the expense of confidentiality and efficiency. Every transaction is public. Every node stores everything. And nothing is fast.
+
+That tradeoff? That's the whole game. Every design decision in blockchain flows from it.
+
+---
+
+## 2. The Four Cryptographic Primitives
+
+If you've got a security background, you probably know most of these already. Blockchain is really just a clever composition of four building blocks.
+
+### Hash Functions (SHA-256, Keccak-256)
+
+A hash function takes any input and spits out a fixed-size, random-looking output. Same input, same output, every time. But change a single bit and the output changes completely — that's the *avalanche effect*. And it's a one-way street: easy to compute the hash, computationally impossible to reverse it or find two inputs that produce the same output.
+
+I think of hashes as digital fingerprints: tiny, unique, and impossible to fake or reverse-engineer back into the original.
+
+### Public/Private Key Pairs
+
+You generate a giant random number — that's your **private key**. Run it through some math and you get a **public key**. Going from private to public is easy; going backwards is mathematically infeasible. Your blockchain "address" is just a hash of your public key.
+
+Here's the single most important consequence in all of blockchain, and I want to be blunt about it: **your private key IS your account.** There's no password reset. No support team. No recovery flow. Lose it, and your funds are gone forever. If someone steals it, they *become* you in every cryptographic sense the network can see.
+
+That's a fundamentally different security model than anything in traditional web, and it took me a while to internalize it.
+
+### Digital Signatures
+
+You hash a message, then run that hash through a math operation with your private key, producing a signature. Anyone with your public key can verify that the signature came from the matching private key, on that exact message. This proves authenticity, integrity, and non-repudiation — all without revealing the private key itself.
+
+Here's a detail I find elegant: every Ethereum transaction is signed this way. Nodes don't store a "from" field — they *recover* the sender's address from the signature itself. The sender proves who they are by the act of signing. No identity lookup required.
+
+### Merkle Trees
+
+Picture a pyramid of hashes. You hash each transaction individually, then hash pairs of those hashes together, then pairs of *those*, and so on — until you end up with a single root hash that summarizes everything below it.
+
+The clever part, and the reason I bring this up specifically: you can prove a single transaction exists inside a block of a million transactions by sending only ~20 hashes. Not all million. Just ~20. Proofs scale **logarithmically**. That's incredibly powerful for verification at scale.
+
+---
+
+## 3. Block Structure and the "Chain"
+
+Alright, let's talk about what a block actually looks like. A block has two parts: a **header** (small, metadata) and a **body** (the list of transactions).
+
+The header contains:
+
+- **Previous block's hash** — the link to the prior block
+- **Merkle root** — summarizes all transactions in this block
+- **Timestamp**, block number, and consensus-related fields
+
+That "previous block hash" field is what makes the chain a *chain*. Block 5 points to block 4, which points to block 3, all the way back to block 0 — the **genesis block**.
+
+**So why is this tamper-evident?** If an attacker changes one transaction in an old block, that block's hash changes. Which breaks the next block's "previous hash" reference. Which breaks the *next* block's reference. And so on, cascading all the way to the present.
+
+To get away with it, the attacker would have to rebuild every block from that point forward, *faster than the entire honest network is producing new blocks*. That's computationally and economically infeasible. And that's the whole security guarantee in one sentence.
+
+---
+
+## 4. Where Do Blocks Live? Nodes and the Network
+
+This is something I had to unlearn from traditional infra thinking. The blockchain isn't stored anywhere specific. It's stored on **thousands of independent computers around the world simultaneously**, each holding a complete copy.
+
+These computers are called **nodes**. A node runs the protocol software, stores the entire chain on its disk, talks to other nodes, and validates everything it hears. Nodes are run by hobbyists, exchanges, validators, universities, and infrastructure companies. Bitcoin has ~15,000 reachable nodes. Ethereum is similar.
+
+**There is no central server.** "The chain" exists as the consensus among thousands of identical copies. If half the nodes vanished right now, the network would keep running without blinking.
+
+### How Do Nodes Find Each Other?
+
+Brand-new nodes start with a small **hardcoded list of bootstrap nodes** baked into the software — just enough to make their first few connections. After that, it's pure **gossip**: each node asks its peers "who else do you know?" and discovers more nodes by introduction. Within seconds a new node knows hundreds of peers and has forgotten the bootstrap list entirely.
+
+New transactions and blocks then **flood** the network exponentially. Each node forwards new info to its 25–50 peers, who forward it to *their* peers, and within 1–3 seconds the whole planet has the message. No central coordinator needed.
+
+And here's the part I find most interesting from a security perspective: every node **independently verifies everything it receives**. Lying nodes get caught and ignored automatically. The network is essentially a self-auditing system.
+
+---
+
+## 5. Consensus Mechanisms: PoW vs PoS
+
+So who gets to write the next block? That's what the consensus mechanism decides. There are two that matter.
+
+### Proof of Work (Bitcoin)
+
+To propose a block, you have to solve what is essentially a useless math puzzle: find a number that, when hashed with the block, produces a hash starting with many zeros. The only way to find it is brute-force guessing — trillions of attempts per second, using specialized hardware (ASICs) and enormous amounts of electricity.
+
+Finding the answer is hard. Verifying it is trivial. The winner gets newly minted bitcoins plus transaction fees.
+
+To rewrite history, an attacker would need to outpace the entire honest network — requiring more than 50% of all global mining power (a "51% attack"). The cost of that would exceed anything they could ever steal.
+
+**The security model here is physics and electricity.** It's wasteful by design, because the wastefulness *is* the security.
+
+### Proof of Stake (Ethereum, post-2022)
+
+Instead of burning electricity, validators **lock up money as collateral** — 32 ETH on Ethereum. The protocol randomly picks a validator to propose each block, weighted by stake size. If a validator misbehaves — signs conflicting blocks, approves invalid ones — their stake gets **slashed** (destroyed).
+
+**The security model here is economic.** The cost of attacking is measured in dollars of locked-up tokens, and the moment you attack, the protocol burns your collateral. Ethereum's PoS is ~99.95% more energy-efficient than its old PoW system.
+
+Here's how I keep them straight:
+
+| | **Proof of Work** | **Proof of Stake** |
+|---|---|---|
+| Used by | Bitcoin | Ethereum, Solana, most new chains |
+| What you risk | Electricity + hardware | Locked-up capital |
+| Attack cost | 51% of global mining power | 33%+ of staked tokens |
+| Energy use | Country-scale | Household-scale |
+| Maturity | Battle-tested since 2009 | Newer at scale |
+
+Both make cheating economically irrational. Different costs, same goal.
+
+---
+
+## 6. Multiple Chains
+
+Something that surprised me early on: anyone can launch a new blockchain. It's just software. Today there are hundreds of significant ones, each a parallel universe with its own nodes, ledger, native token, and rules.
+
+The big names worth knowing:
+
+- **Bitcoin** — the original; pure value transfer, no smart contracts
+- **Ethereum** — smart contracts, the EVM, the heart of DeFi and NFTs
+- **BNB Chain** — EVM-compatible, cheaper fees, run by Binance
+- **Solana** — much faster throughput, more centralized
+- **Polygon, Arbitrum, Optimism, Base** — Layer 2s built on top of Ethereum
+- **Avalanche, Cardano, Cosmos, Near, Sui, Aptos** — and many others
+
+Here's the critical thing: **chains don't natively know about each other.** Moving assets between them requires **bridges** — complex smart contracts that lock tokens on one side and mint equivalents on the other. Historically, bridges have been the single biggest source of catastrophic hacks:
+
+- Ronin: **$625M**
+- Wormhole: **$325M**
+- Nomad: **$190M**
+
+And the fundamental tension every chain navigates? The **blockchain trilemma**: decentralization, security, and scalability — pick two. Every chain makes a different bet on which two matter most.
+
+---
+
+## 7. The Web3 Tools You'll Actually Use
+
+Almost every famous Web3 service falls into one of five categories. Here's my quick-reference breakdown:
+
+**Wallets** (MetaMask, Phantom, Ledger) — software or hardware that holds your private key and signs transactions. They don't store your money; they store the *key* that proves you can spend the money on-chain. Important distinction.
+
+**Centralized exchanges / CEXs** (Coinbase, Binance, Kraken) — regulated companies where you buy crypto with fiat. They hold your funds in their database — convenient but **custodial**. "Not your keys, not your coins." I use them as on-ramps, then withdraw to self-custody.
+
+**Decentralized exchanges / DEXs** (Uniswap, Curve) — not companies at all, just smart contracts on a blockchain that let anyone swap tokens with no intermediary. The website is just a friendly front-end; the contracts run on-chain with or without it.
+
+**Block explorers** (Etherscan, Solscan, BscScan) — search engines for blockchains. Look up any address, transaction, block, or contract. This is your single most important tool as a security engineer. When hacks happen, this is where you trace the funds. I keep Etherscan open more than any other tool.
+
+**Node providers** (Infura, Alchemy) — companies that run nodes professionally and sell API access so wallets and apps don't have to run their own. They're large *participants* in the node network, not owners of it. But they're a real centralization concern in practice — a lot of Web3 goes through a handful of these providers.
+
+---
+
+## 8. Reading a Transaction
+
+This is the part where things get practical. Every Ethereum transaction has roughly this shape:
+
+- **From / To** — sender and recipient addresses
+- **Value** — native ETH being transferred (often 0 for contract calls!)
+- **Gas Price** — what you pay per unit of computational work
+- **Gas Used × Gas Price = Transaction Fee** — total cost paid to the validator
+- **Nonce** — a per-account counter that prevents replay attacks and enforces ordering
+- **Input Data** — for contract calls, the function and arguments being invoked
+- **Signature (v, r, s)** — proves the sender authorized it
+
+Here's a security insight I wish someone had told me on day one: **Value and what the transaction actually does are completely decoupled.** A transaction can move zero ETH while simultaneously transferring millions in USDC, draining an NFT collection, or granting a malicious contract permission to spend all your tokens. The dangerous part lives in the Input Data, not the Value field. Always look at the Input Data.
+
+### Units of ETH
+
+- **wei** — the atomic, indivisible unit (1 ETH = 10¹⁸ wei). Used internally by smart contracts.
+- **Gwei** — a billion wei. The convenient unit for gas prices ("gas is 30 Gwei right now").
+- **ETH** — a billion Gwei. The human-friendly unit for balances.
+
+Think dollars and cents — same thing, different scales.
+
+### Gas, Briefly
+
+Gas is the unit of computational work on Ethereum. Every operation costs gas: a simple transfer is 21,000 gas, a Uniswap swap runs ~150,000, and complex DeFi calls can hit 500,000+. The gas price (Gwei per gas unit) is set by a market — when blocks fill up, prices spike; when the network is quiet, fees drop to fractions of a cent.
+
+Since EIP-1559, part of the fee (the **base fee**) is *burned* — destroyed forever — and only the **priority fee** (tip) goes to the validator. This means ETH can actually be deflationary during high-usage periods, which has interesting economic implications.
+
+---
+
+## 9. Concepts That Catch Newcomers (Including Me)
+
+A few things that tripped me up or that I keep coming back to reference:
+
+**Tokens vs ETH.** ETH is the native currency, baked into the protocol itself. **ERC-20 tokens** (USDC, DAI, UNI, etc.) are something different — they're smart contracts that maintain their own internal ledgers. Your "USDC balance" isn't stored by Ethereum; it's stored *inside the USDC contract*. Transferring USDC is a function call to that contract, not a native ETH transfer. **NFTs (ERC-721)** work the same way but with unique IDs instead of fungible amounts.
+
+**Token approvals are dangerous.** To use most DeFi apps, you have to grant a smart contract permission to spend your tokens on your behalf. If that contract is malicious or gets hacked later, every approved token can be drained. I use **revoke.cash** periodically to clean up old approvals, and I'd recommend you do the same.
+
+**Layer 1 vs Layer 2.** L1s are the base chains — Ethereum, Bitcoin. L2s (Arbitrum, Optimism, Base) are systems built on top that batch transactions cheaply and post compressed proofs back to the L1 for final security. Most real DeFi activity now happens on L2s, not Ethereum mainnet directly.
+
+**The mempool.** This one's fascinating from a security angle. The mempool is a public waiting room for pending transactions. Validators pick from it based on fees. Because it's public, bots watch it for profitable opportunities — front-running your trades, executing sandwich attacks, and engaging in the broader **MEV** (Maximal Extractable Value) industry. Your transaction's intent is visible *before* it executes, and that visibility is exploitable. It's like shouting your poker hand before the betting round.
+
+**Mainnet vs testnet.** Every chain has a real network (mainnet) and free practice copies (Sepolia, Holesky for Ethereum). Always learn and experiment on testnets first. Making mistakes there is free. Making mistakes on mainnet is not.
+
+---
+
+## 10. Why Should a Security Engineer Care?
+
+I'll be direct about this. Web3 security is one of the highest-leverage fields in infosec right now. Here's why I think that:
+
+- **The stakes are extreme.** A single bad line of Solidity can drain hundreds of millions of dollars in seconds. There are no rollbacks, no chargebacks, no patching windows. The contract is the law, and exploits are instant and irreversible.
+- **The field is supply-constrained.** There are maybe a few thousand skilled smart contract auditors globally, against enormous and growing demand. Top auditors and contest competitors earn well above traditional appsec rates. Bug bounties on Immunefi regularly pay **$1M+** for critical findings.
+- **The work is intellectually dense.** You're combining cryptography, distributed systems, a new virtual machine (the EVM), a new language (Solidity), and adversarial *economic* reasoning. You're not just auditing code — you're auditing invariants, incentives, and game theory.
+- **Your existing skills transfer directly.** If you already think in threat models, trust boundaries, and attack surfaces, you have most of what you need. What's left is learning the EVM execution model, Solidity's specific footguns, the DeFi primitive vocabulary, and pattern recognition for known bug classes.
+
+I won't pretend the downsides aren't real: the industry is volatile, there are a lot of scams to navigate, and the learning curve combines several deep fields at once. But for a motivated engineer with classical security training, you can go from "curious" to "world-class auditor" in a couple of years. That's one of the few areas in security where that trajectory is still genuinely possible.
+
+---
+
+## TL;DR
+
+Blockchain is a tamper-evident, replicated state machine held together by hash functions, key pairs, signatures, and Merkle trees. Thousands of independent nodes around the world store identical copies of the ledger and agree on new blocks via consensus rules — backed by either electricity (Proof of Work) or locked-up capital (Proof of Stake).
+
+On top of this base layer, smart contracts turn the chain into an adversarial code execution environment where every bug is directly monetizable, every state change is public forever, and every user is one signed transaction away from total loss.
+
+For me as a security engineer, it's the rare field where offense and defense are both unsolved, the financial stakes are enormous, and the learning curve rewards exactly the kind of thinking I already do.
+
+Next up on my list: the EVM, Solidity, and the bug classes that have caused the biggest losses in the industry. That's where the real security work begins.
