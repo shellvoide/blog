@@ -124,7 +124,7 @@ export const Blog = defineDocumentType(() => ({
         image: doc.images ? doc.images[0] : siteMetadata.socialBanner,
         url: doc.canonicalUrl || `${siteMetadata.siteUrl}/${doc.slug}`,
         mainEntityOfPage: doc.canonicalUrl || `${siteMetadata.siteUrl}/${doc.slug}`,
-        keywords: doc.tags?.join(', '),
+        keywords: doc.tags ? [...doc.tags].join(', ') : undefined,
       }),
     },
   },
