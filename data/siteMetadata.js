@@ -5,7 +5,7 @@ const siteMetadata = {
   headerTitle: 'Blog - Shellvoide',
   description: 'Welcome to our blog. Here we share our thoughts and insights on cybersecurity, technology, and more. You can get in touch with us for any cybersecurity needs at info@shellvoide.com',
   language: 'en-us',
-  theme: 'dark', // system, dark or light
+  theme: 'light', // system, dark or light
   siteUrl: 'https://shellvoide.com/blog',
   siteRepo: 'https://github.com/shellvoide/blog',
   siteLogo: `${process.env.BASE_PATH || ''}/static/images/logo.png`,
