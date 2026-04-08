@@ -1,10 +1,10 @@
 ---
-title: "Blockchain Fundamentals: A Security Engineer's Mental Model"
-summary: "A ground-up blockchain explainer built for security engineers — covering cryptographic primitives, block structure, consensus mechanisms, the Web3 tooling landscape, transaction anatomy, and why Web3 security is one of the most interesting fields in infosec right now."
+title: 'Blockchain Fundamentals for Security Engineers: Web3 Security Mental Model'
+summary: 'Blockchain fundamentals for security engineers covering cryptographic primitives, block structure, consensus (PoW/PoS), Web3 tooling, transaction anatomy, and core Web3 security concepts.'
 date: '2026-04-08'
 lastmod: '2026-04-08'
 authors: ['default']
-tags: ['blockchain', 'web3-security', 'cryptography', 'ethereum', 'smart-contracts', 'infosec']
+tags: ['blockchain', 'web3', 'web3-security', 'cryptography', 'ethereum', 'smart-contracts', 'infosec']
 draft: false
 layout: PostSimple
 canonicalUrl: 'https://shellvoide.com/blog/blockchain-fundamentals-a-security-engineers-mental-model'
@@ -15,6 +15,30 @@ Most blockchain explainers I've come across either drown you in crypto-bro marke
 If that sounds like you, good. By the end of this, you should be able to read any block explorer fluently and understand why Web3 security is one of the most interesting corners of infosec right now. I'm also keeping this around as a reference for myself — a cheat sheet I can come back to when the details get fuzzy.
 
 Let's get into it.
+
+## Blockchain Fundamentals Quick Answer (TL;DR)
+
+If you only have 2 minutes, anchor on these points:
+
+1. Blockchain is an append-only, replicated ledger secured by hashes, signatures, and consensus.
+2. Every block links to the previous block hash, so tampering breaks the chain.
+3. Consensus picks who writes the next block: Proof of Work (electricity) or Proof of Stake (locked capital).
+4. Your private key is your account; lose it or leak it, and funds are gone.
+5. Web3 security focuses on smart contracts, bridges, and key management.
+
+## Who This Guide Is For
+
+- Security engineers and appsec folks learning Web3 from first principles
+- Pentesters who need to read block explorers and transactions with confidence
+- Anyone mapping traditional threat models to blockchain and smart contracts
+
+## What You Will Learn
+
+- The cryptographic primitives behind blockchain security
+- How blocks are structured and why the chain is tamper-evident
+- How PoW and PoS consensus change attack costs
+- The Web3 tooling landscape you will actually use in practice
+- How to read transactions and spot security-relevant fields
 
 ---
 
@@ -235,6 +259,29 @@ I won't pretend the downsides aren't real: the industry is volatile, there are a
 
 ---
 
+## Related Reading
+
+- [JWT Security Guide: Common JWT Vulnerabilities, Attacks, Exploits, and Defenses](/blog/jwt-attacks-in-the-wild-from-decode-to-exploit)
+- [API Pentesting Checklist: What Most Teams Miss](/blog/api-pentesting-checklist-what-most-teams-miss)
+
+## FAQ: Blockchain Fundamentals for Security Engineers
+
+### Is blockchain secure by default?
+
+Blockchain provides strong integrity guarantees, but it does not provide confidentiality. Security depends on correct consensus rules, correct smart contract logic, and secure key management. Most real-world failures are from bugs in contracts, bridges, or operational key handling.
+
+### What is the difference between Bitcoin and Ethereum for security work?
+
+Bitcoin is mainly value transfer with a smaller attack surface. Ethereum adds smart contracts, which create a large and complex security surface with many bug classes and exploit patterns. Security engineers typically focus more on Ethereum and EVM chains.
+
+### Why are bridges hacked so often?
+
+Bridges move assets between chains that do not natively trust each other. They require complex smart contract and validator logic, which creates large attack surfaces. Compromising a bridge often unlocks large amounts of pooled funds.
+
+### What should I learn first for Web3 security?
+
+Start with the EVM execution model, Solidity basics, and how to read transactions in a block explorer. Then study common bug classes like access control, reentrancy, oracle manipulation, and approval abuse.
+
 ## TL;DR
 
 Blockchain is a tamper-evident, replicated state machine held together by hash functions, key pairs, signatures, and Merkle trees. Thousands of independent nodes around the world store identical copies of the ledger and agree on new blocks via consensus rules — backed by either electricity (Proof of Work) or locked-up capital (Proof of Stake).
@@ -244,3 +291,7 @@ On top of this base layer, smart contracts turn the chain into an adversarial co
 For me as a security engineer, it's the rare field where offense and defense are both unsolved, the financial stakes are enormous, and the learning curve rewards exactly the kind of thinking I already do.
 
 Next up on my list: the EVM, Solidity, and the bug classes that have caused the biggest losses in the industry. That's where the real security work begins.
+
+If you want more deep dives, visit the rest of the blog at [/blog](/blog).
+
+*Need help with Web3 security, smart contract reviews, or a real-world assessment? Contact [info@shellvoide.com](mailto:info@shellvoide.com).*
