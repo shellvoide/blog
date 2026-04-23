@@ -23,6 +23,7 @@ export async function generateMetadata(props: {
         'application/rss+xml': `${siteMetadata.siteUrl}/tags/${tag}/feed.xml`,
       },
     },
+    robots: { index: false, follow: true },
   })
 }
 
