@@ -1,0 +1,116 @@
+---
+title: 'Four SAST Tools, One Broken App, and the AI That Hit Zero False Positives'
+summary: 'A SAST benchmark on OWASP Juice Shop pitting Semgrep, SonarQube, and Snyk Code against KLUE, our autonomous source code analysis platform. The story is in the precision column, and in the vulnerability classes that have no pattern to match at all.'
+date: '2026-05-16'
+lastmod: '2026-05-16'
+authors: ['appsec-research']
+tags: ['sast', 'static-analysis', 'klue', 'benchmark', 'juice-shop', 'semgrep', 'sonarqube', 'snyk-code', 'appsec', 'autonomous-security', 'ai-pentesting']
+images: ['/static/images/klue-sast-benchmark-juice-shop/image-0.png']
+draft: false
+layout: PostSimple
+canonicalUrl: 'https://shellvoide.com/blog/klue-sast-benchmark-juice-shop'
+---
+
+> [!NOTE]
+> KLUE is Shellvoide's autonomous source code security platform. We benchmark every detection approach we ship because we do not trust marketing claims, including our own. The numbers in this post come from real runs against OWASP Juice Shop v20.0.0 (`master` branch, identical commit for every tool), with ground truth established by hand before any tool was scored.
+
+For twenty years, static application security testing has worked essentially one way. You write rules, patterns that describe what dangerous code looks like, and the tool walks your source matching those patterns. A string flowing into a SQL query without parameterization. A call to `eval`. A hardcoded value that looks like a secret. The rules get more sophisticated over time, the taint tracking gets smarter, but the fundamental model has not changed: a SAST tool finds what its rules were written to find, and it is blind to everything else.
+
+That model is now being challenged, and the challenge is worth taking seriously. AI driven code analysis does not match patterns. It reasons about code the way a human reviewer does, building a mental model of what the application is *supposed* to do and noticing where the implementation betrays that intent. The interesting question is not whether that sounds impressive in a pitch. It is whether it actually finds bugs that pattern based tools miss, and whether it does so without burying a security team in noise.
+
+So we tested it. We ran four tools against OWASP Juice Shop, the most deliberately broken web application in existence, maintained for over a decade as a security training ground. Three of them are pattern based industry standards: Semgrep, SonarQube, and Snyk Code. The fourth is KLUE, Shellvoide's AI driven source code analysis platform. Same repository, same commit of the `master` branch (v20.0.0), every finding scored against the same ground truth that we built by hand.
+
+![KLUE agent walking the Juice Shop routes, emitting SAST and secret findings as it triages](/static/images/klue-sast-benchmark-juice-shop/image-0.png)
+
+This post is about what the results say about where SAST is heading.
+
+## The benchmark, and the rules we held ourselves to
+
+Before any tool was scored, we walked the Juice Shop source by hand and catalogued every statically detectable vulnerability: injection flaws, hardcoded secrets, weak cryptography, path traversal, open redirect, SSRF, XSS sinks, security misconfiguration. That manual inventory came to **34 distinct SAST detectable vulnerabilities**, and it is the baseline every tool is measured against. Ground truth was established *before* scoring, independently of any tool's output, so no tool, including ours, got to define the answer key.
+
+We also drew a hard scope line. Juice Shop contains many runtime only vulnerabilities, broken authentication, certain business logic flaws, that no source reading tool can be expected to find, and those are excluded from the scored comparison. And one consistent cleanup rule was applied to every tool equally: deduplicate findings that fire multiple rules on the same line, and exclude test fixture and challenge solution files from the scored set. The same rule, applied identically, to all four.
+
+That last rule matters more than it sounds, as you are about to see.
+
+## Raw finding counts are the first thing AI exposes as meaningless
+
+Here is what each tool reported out of the box:
+
+| Tool | Raw findings |
+|---|---|
+| Snyk Code | 261 |
+| KLUE | 48 |
+| Semgrep | 52 |
+| SonarQube | 47 |
+
+A procurement process that stops at this table concludes Snyk Code is five times more thorough than anything else. That conclusion is not just wrong. It is backwards.
+
+Snyk Code's 261 findings include **213 hits inside test files**, hardcoded passwords in `.test.ts` and `.spec.ts` suites that exist so automated tests can log in. The file `test/api/quantity.test.ts` alone was flagged seventeen times. These are not vulnerabilities. They are test fixtures. Flagging them is not thoroughness; it is a tool that cannot tell the difference between a credential that ships to production and a credential that exists only to make a unit test run.
+
+Apply the same cleanup rule to everyone:
+
+| Tool | Raw | After dedup and noise removal | Noise discarded |
+|---|---|---|---|
+| KLUE | 48 | 48 | 0% |
+| Semgrep | 52 | 33 | 37% |
+| SonarQube | 47 | 33 | 30% |
+| Snyk Code | 261 | 30 | **88%** |
+
+Snyk Code's real, in scope output is 30 findings, not 261. And here is the first thing the AI approach changes: KLUE discarded *nothing*. Every one of its 48 findings survived the filter. Zero test file false positives, zero fixture noise.
+
+That is not luck. A pattern matcher flags a hardcoded credential pattern wherever it appears, because a string that looks like a password looks identical in `login.ts` and in `quantity.test.ts`. A tool that *reasons* about code knows one of those files is production authentication logic and the other is a test suite, the same way a human reviewer glances at the file path and the surrounding code and moves on. The distinction between "vulnerability" and "test fixture" is a contextual judgment, and contextual judgment is exactly what AI brings to a problem that pattern matching cannot.
+
+## The scorecard
+
+Every finding from every tool was verified by hand against the Juice Shop source, true positive or false positive, confirmed by reading the actual code. Against the baseline of 34 vulnerabilities:
+
+| Tool | Valid findings | False positives | Recall | Precision | F1 |
+|---|---|---|---|---|---|
+| **KLUE** | 26 | **0** | **76.5%** | **100.0%** | **86.7%** |
+| Semgrep | 24 | 9 | 70.6% | 72.7% | 71.6% |
+| SonarQube | 22 | 14 | 64.7% | 61.1% | 62.9% |
+| Snyk Code | 23 | 220 | 67.6% | 9.5% | 16.6% |
+
+KLUE leads on recall, precision, and F1. But the recall number deserves honesty rather than a victory lap. The three pattern based tools are not bad at finding bugs. Semgrep in particular caught 24 of the 34 baseline vulnerabilities, and on raw detection it is a genuinely capable engine. The gap between 70.6% and 76.5% is real but it is not a chasm. If recall were the only axis that mattered, this would be a closer race than the headline suggests, and we are not going to pretend otherwise.
+
+The precision column is where the AI approach stops being a marginal improvement and becomes a different category of tool. KLUE: 26 findings, 26 real, zero false positives. Snyk Code: 23 real findings buried under 220 false ones, a precision of 9.5%. Semgrep made 9 false positive calls; SonarQube made 14. KLUE made none.
+
+## Why precision is the metric AI actually moves
+
+It is tempting to treat precision as a secondary stat, nice to have, but recall is what catches the breach. In the real economics of a security team, that has it exactly backwards, and understanding why explains what AI is really changing about SAST.
+
+A SAST tool does not fix anything. It produces a list, and a human acts on the list. Every false positive on that list is a tax: someone has to open the finding, read the code, conclude it is nothing, and dismiss it. Snyk Code's output asks a security team to perform that ritual 238 times to find 23 real bugs. That is not a minor inconvenience. It is the precise mechanism by which SAST tools fail in practice, not by missing bugs, but by burying real ones so deep in noise that the team stops reading the output at all. Every appsec engineer has worked with a scanner whose results everyone learned to ignore.
+
+Pattern based SAST has always faced a structural tradeoff here. Loosen the rules to catch more, and false positives climb. Tighten them to cut noise, and recall falls. You move the slider; you do not escape it. The reason is that a pattern has no way to know whether the dangerous looking code it matched is actually dangerous *in context*, so it either flags everything that matches and accepts the noise, or flags conservatively and accepts the misses.
+
+AI changes this because reasoning is not bound by that tradeoff. KLUE found *more* real vulnerabilities than any pattern tool **and** produced zero false positives. It sits in a corner of the precision and recall space that the slider does not reach. It does that because, like a human reviewer, it can look at a dangerous looking construct and reason about whether the surrounding code actually makes it exploitable, and look at an innocent looking construct and reason that it is not. It does not have to choose between catching more and staying quiet. That is the shift: not a better ruleset, but the removal of the constraint that made rulesets a compromise in the first place.
+
+## What AI finds that rules cannot even describe
+
+The clearest evidence of the shift is in the findings that have no pattern to match at all.
+
+A SQL injection has a recognizable shape, user input flowing into a query string, and every tool in this test caught the SQL injection in Juice Shop's login route. That is pattern matching working as designed. But consider three things KLUE found that the pattern tools did not, and ask what rule you would even write to catch them.
+
+**A null byte ordering bug in the file server.** Juice Shop's file server checks a requested filename against an allowlist of safe extensions, and *then* strips everything after a null byte. KLUE flagged that the order is wrong: a request for `secret.txt%00.md` passes the extension check because it ends in `.md`, and only afterward does the null byte truncation turn it back into `secret.txt`. The vulnerability is not any single line. It is the *sequence* of two operations that are each individually fine. There is no pattern for "these two safe operations are in the wrong order." There is only reasoning about what the code does, step by step.
+
+**A NoSQL injection reachable only through prompt injection.** Juice Shop's chatbot exposes a tool that runs a MongoDB `$where` query. KLUE flagged that this sink is reachable not through a normal request parameter but through the LLM that drives the chatbot. An attacker who manipulates the model's behavior through a crafted message can steer it toward the injectable query. KLUE rated this one "likely" rather than "confirmed," because the input does pass through a numeric coercion first. Calibrated, honest uncertainty rather than a confident overclaim. Finding it at all requires understanding that an LLM tool definition is an attack surface, a concept that did not exist when most SAST rule sets were designed.
+
+**A reentrancy vulnerability in a smart contract.** Juice Shop ships a Solidity contract whose `withdraw` function sends ETH before updating the caller's balance, the classic reentrancy pattern, and also authenticates with `tx.origin` instead of `msg.sender`. KLUE caught both. This is an entirely different language and threat model from the Node.js application around it, and the tool moved between them without being told to.
+
+Beyond these, KLUE identified a cluster of access control failures: insecure direct object references where endpoints trust a `UserId` from the request body instead of the authenticated session, a registration endpoint that lets a user set their own role to `admin`, an unauthenticated metrics endpoint leaking application internals. Broken access control has topped the OWASP Top 10 since 2021, and it is the category traditional SAST has always been worst at, because an IDOR does not *look* dangerous. Every token in the line is benign. A query reads `req.body.UserId`; nothing about that syntax is suspicious. The bug is that the value came from the wrong place, and seeing that requires knowing where it *should* have come from. That is reasoning about intent, and intent is not something a pattern can encode.
+
+## What this means for where SAST is going
+
+It would be easy to overclaim here, so let us be measured about it.
+
+Pattern based SAST is not obsolete. Semgrep, SonarQube, and Snyk Code all found real vulnerabilities in this test, and a tuned ruleset running in a CI pipeline remains a reasonable, fast, deterministic baseline. Rules are transparent and auditable in a way that an AI's reasoning is not yet, and that matters for some teams and some compliance regimes. AI driven analysis also brings its own open questions, consistency across runs, explainability of a given verdict, the cost of inference at scale, and an honest assessment names those rather than hiding them.
+
+But the direction is hard to miss. The two failure modes that have defined SAST for two decades, drowning teams in false positives, and being structurally blind to anything without a pattern, are both *consequences of the pattern matching model itself*. They are not bugs to be fixed with a better ruleset. They are the cost of the approach. Reasoning based analysis does not pay that cost: in this benchmark it found more, with perfect precision, including entire vulnerability classes that have no pattern to match.
+
+The future of SAST is most likely not AI replacing rules outright, but reasoning becoming the primary engine with pattern matching as the fast, cheap first pass underneath it. The tool stops being a pattern matcher that produces a list for humans to triage, and starts being something closer to a tireless senior code reviewer, one that reads every file, understands what the application is meant to do, and flags only what genuinely matters. The benchmark above is a snapshot of that transition already happening.
+
+For the security teams who will use these tools, the change that matters is not the finding count. It is trust. A scanner whose output is 88% noise teaches a team to ignore it. A scanner that reports 48 findings and all 48 are real becomes something a team acts on. That is the quiet, decisive thing AI changes about static analysis: not that it finds more, but that it finds it cleanly enough to be believed.
+
+---
+
+*KLUE is part of Shellvoide's Penetration Testing as a Service (PTaaS) platform, delivering autonomous security assessments powered by AI. The SAST capability covered above is one slice of that broader platform; the others run against live applications and infrastructure. To run KLUE against your own codebase, or to see a sample report from a benchmark like this one, reach out at [info@shellvoide.com](mailto:info@shellvoide.com).*
