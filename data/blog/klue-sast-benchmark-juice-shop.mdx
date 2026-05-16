@@ -68,6 +68,19 @@ Every finding from every tool was verified by hand against the Juice Shop source
 | SonarQube | 22 | 14 | 64.7% | 61.1% | 62.9% |
 | Snyk Code | 23 | 220 | 67.6% | 9.5% | 16.6% |
 
+<ScatterPlot
+  title="Precision vs recall on Juice Shop"
+  xLabel="Recall (%)"
+  yLabel="Precision (%)"
+  points={[
+    { label: 'KLUE', x: 76.5, y: 100, highlight: true, align: 'left' },
+    { label: 'Semgrep', x: 70.6, y: 72.7, align: 'right' },
+    { label: 'SonarQube', x: 64.7, y: 61.1, align: 'bottom' },
+    { label: 'Snyk Code', x: 67.6, y: 9.5, align: 'right' },
+  ]}
+  caption="Higher and further right is better. KLUE sits alone in the upper right corner, in a region of the precision and recall space that pattern based tools cannot reach without giving something up."
+/>
+
 KLUE leads on recall, precision, and F1. But the recall number deserves honesty rather than a victory lap. The three pattern based tools are not bad at finding bugs. Semgrep in particular caught 24 of the 34 baseline vulnerabilities, and on raw detection it is a genuinely capable engine. The gap between 70.6% and 76.5% is real but it is not a chasm. If recall were the only axis that mattered, this would be a closer race than the headline suggests, and we are not going to pretend otherwise.
 
 The precision column is where the AI approach stops being a marginal improvement and becomes a different category of tool. KLUE: 26 findings, 26 real, zero false positives. Snyk Code: 23 real findings buried under 220 false ones, a precision of 9.5%. Semgrep made 9 false positive calls; SonarQube made 14. KLUE made none.
@@ -77,6 +90,17 @@ The precision column is where the AI approach stops being a marginal improvement
 It is tempting to treat precision as a secondary stat, nice to have, but recall is what catches the breach. In the real economics of a security team, that has it exactly backwards, and understanding why explains what AI is really changing about SAST.
 
 A SAST tool does not fix anything. It produces a list, and a human acts on the list. Every false positive on that list is a tax: someone has to open the finding, read the code, conclude it is nothing, and dismiss it. Snyk Code's output asks a security team to perform that ritual 238 times to find 23 real bugs. That is not a minor inconvenience. It is the precise mechanism by which SAST tools fail in practice, not by missing bugs, but by burying real ones so deep in noise that the team stops reading the output at all. Every appsec engineer has worked with a scanner whose results everyone learned to ignore.
+
+<BarChart
+  title="False positives by tool"
+  data={[
+    { label: 'KLUE', value: 0, highlight: true },
+    { label: 'Semgrep', value: 9 },
+    { label: 'SonarQube', value: 14 },
+    { label: 'Snyk Code', value: 220 },
+  ]}
+  caption="Each bar is one more finding a human has to open, read, reason about, and dismiss. The triage tax compounds quickly."
+/>
 
 Pattern based SAST has always faced a structural tradeoff here. Loosen the rules to catch more, and false positives climb. Tighten them to cut noise, and recall falls. You move the slider; you do not escape it. The reason is that a pattern has no way to know whether the dangerous looking code it matched is actually dangerous *in context*, so it either flags everything that matches and accepts the noise, or flags conservatively and accepts the misses.
 
