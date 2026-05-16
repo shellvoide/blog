@@ -5,22 +5,19 @@ date: '2026-05-16'
 lastmod: '2026-05-16'
 authors: ['appsec-research']
 tags: ['sast', 'static-analysis', 'klue', 'benchmark', 'juice-shop', 'semgrep', 'sonarqube', 'snyk-code', 'appsec', 'autonomous-security', 'ai-pentesting']
-images: ['/blog/static/images/klue-sast-benchmark-juice-shop/image-0.png']
 draft: false
 layout: PostSimple
 canonicalUrl: 'https://shellvoide.com/blog/klue-sast-benchmark-juice-shop'
 ---
 
 > [!NOTE]
-> KLUE is Shellvoide's autonomous source code security platform. We benchmark every detection approach we ship because we do not trust marketing claims, including our own. The numbers in this post come from real runs against OWASP Juice Shop v20.0.0 (`master` branch, identical commit for every tool), with ground truth established by hand before any tool was scored.
+> KLUE is Shellvoide's autonomous pentesting platform. We benchmark every detection approach we ship because we do not trust marketing claims, including our own. The numbers in this post come from real runs against OWASP Juice Shop v20.0.0 (`master` branch, identical commit for every tool), with ground truth established by hand before any tool was scored.
 
 For twenty years, static application security testing has worked essentially one way. You write rules, patterns that describe what dangerous code looks like, and the tool walks your source matching those patterns. A string flowing into a SQL query without parameterization. A call to `eval`. A hardcoded value that looks like a secret. The rules get more sophisticated over time, the taint tracking gets smarter, but the fundamental model has not changed: a SAST tool finds what its rules were written to find, and it is blind to everything else.
 
 That model is now being challenged, and the challenge is worth taking seriously. AI driven code analysis does not match patterns. It reasons about code the way a human reviewer does, building a mental model of what the application is *supposed* to do and noticing where the implementation betrays that intent. The interesting question is not whether that sounds impressive in a pitch. It is whether it actually finds bugs that pattern based tools miss, and whether it does so without burying a security team in noise.
 
 So we tested it. We ran four tools against OWASP Juice Shop, the most deliberately broken web application in existence, maintained for over a decade as a security training ground. Three of them are pattern based industry standards: Semgrep, SonarQube, and Snyk Code. The fourth is KLUE, Shellvoide's AI driven source code analysis platform. Same repository, same commit of the `master` branch (v20.0.0), every finding scored against the same ground truth that we built by hand.
-
-![KLUE agent walking the Juice Shop routes, emitting SAST and secret findings as it triages](/blog/static/images/klue-sast-benchmark-juice-shop/image-0.png)
 
 This post is about what the results say about where SAST is heading.
 
