@@ -17,7 +17,7 @@ export function BarChart({ title, caption, data, max, suffix = '' }: BarChartPro
   const computedMax = max ?? Math.max(...data.map((d) => d.value), 1)
 
   return (
-    <figure className="not-prose my-8 overflow-hidden rounded-lg border border-gray-200 bg-gray-50 p-5 dark:border-gray-700 dark:bg-gray-900/50 sm:p-6">
+    <figure className="not-prose my-8 overflow-hidden rounded-lg border border-gray-200 bg-gray-50 p-5 sm:p-6 dark:border-gray-700 dark:bg-gray-900/50">
       {title && (
         <div className="mb-5 text-xs font-bold tracking-wider text-gray-500 uppercase dark:text-gray-400">
           {title}
@@ -115,7 +115,7 @@ export function ScatterPlot({
   const yTicks = [0, 25, 50, 75, 100]
 
   return (
-    <figure className="not-prose my-8 overflow-hidden rounded-lg border border-gray-200 bg-gray-50 p-5 dark:border-gray-700 dark:bg-gray-900/50 sm:p-6">
+    <figure className="not-prose my-8 overflow-hidden rounded-lg border border-gray-200 bg-gray-50 p-5 sm:p-6 dark:border-gray-700 dark:bg-gray-900/50">
       {title && (
         <div className="mb-3 text-xs font-bold tracking-wider text-gray-500 uppercase dark:text-gray-400">
           {title}
