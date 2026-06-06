@@ -261,3 +261,107 @@ export function ScatterPlot({
     </figure>
   )
 }
+
+interface CoverageCell {
+  found: number
+  total: number
+}
+
+interface CoverageRow {
+  category: string
+  cells: CoverageCell[]
+}
+
+interface CoverageMatrixProps {
+  title?: string
+  caption?: string
+  columns: string[]
+  rows: CoverageRow[]
+  highlightColumn?: number
+}
+
+export function CoverageMatrix({
+  title,
+  caption,
+  columns,
+  rows,
+  highlightColumn = 0,
+}: CoverageMatrixProps) {
+  const gridTemplate = `minmax(8.5rem,1.5fr) repeat(${columns.length}, minmax(0,1fr))`
+
+  return (
+    <figure className="not-prose my-8 overflow-x-auto rounded-lg border border-gray-200 bg-gray-50 p-5 sm:p-6 dark:border-gray-700 dark:bg-gray-900/50">
+      {title && (
+        <div className="mb-5 text-xs font-bold tracking-wider text-gray-500 uppercase dark:text-gray-400">
+          {title}
+        </div>
+      )}
+      <div className="min-w-[34rem]">
+        <div className="grid items-end gap-2" style={{ gridTemplateColumns: gridTemplate }}>
+          <div />
+          {columns.map((c, i) => (
+            <div
+              key={c}
+              className={`pb-2 text-center text-xs font-semibold ${
+                i === highlightColumn
+                  ? 'text-primary-600 dark:text-primary-400'
+                  : 'text-gray-500 dark:text-gray-400'
+              }`}
+            >
+              {c}
+            </div>
+          ))}
+        </div>
+        <div className="space-y-2">
+          {rows.map((row) => (
+            <div
+              key={row.category}
+              className="grid items-center gap-2"
+              style={{ gridTemplateColumns: gridTemplate }}
+            >
+              <div className="truncate pr-2 text-sm font-medium text-gray-700 dark:text-gray-300">
+                {row.category}
+              </div>
+              {row.cells.map((cell, i) => {
+                const ratio = cell.total > 0 ? cell.found / cell.total : 0
+                const isHi = i === highlightColumn
+                const empty = cell.found === 0
+                return (
+                  <div
+                    key={`${row.category}-${i}`}
+                    className="relative flex h-10 items-center justify-center overflow-hidden rounded-md border border-gray-200/70 dark:border-gray-700/70"
+                  >
+                    {!empty && (
+                      <div
+                        className={`absolute inset-0 ${
+                          isHi ? 'bg-primary-500' : 'bg-gray-500 dark:bg-gray-400'
+                        }`}
+                        style={{ opacity: 0.18 + ratio * 0.7 }}
+                      />
+                    )}
+                    <span
+                      className={`relative font-mono text-xs tabular-nums ${
+                        empty
+                          ? 'text-gray-400 dark:text-gray-600'
+                          : isHi
+                            ? 'text-primary-900 dark:text-primary-50 font-bold'
+                            : 'font-semibold text-gray-900 dark:text-gray-50'
+                      }`}
+                    >
+                      {cell.found}/{cell.total}
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+          ))}
+        </div>
+      </div>
+      {caption && (
+        <figcaption className="mt-4 text-xs text-gray-500 italic dark:text-gray-400">
+          {caption}
+        </figcaption>
+      )}
+    </figure>
+  )
+}

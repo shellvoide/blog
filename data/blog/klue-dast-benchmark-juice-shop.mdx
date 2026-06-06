@@ -1,0 +1,210 @@
+---
+title: "Crawling Isn't Attacking: A Live-Fire DAST Benchmark"
+summary: 'We pointed OWASP ZAP, Burp Suite, Acunetix, and our own KLUE at the same live, deliberately-broken web app. Three of them crawled it and reported headers. One forged an admin token, dumped every user, and reset the admin password, all from two requests, unauthenticated. A field report on what dynamic scanners can and cannot reach.'
+date: '2026-06-06'
+lastmod: '2026-06-06'
+authors: ['appsec-research']
+tags:
+  [
+    'dast',
+    'dynamic-analysis',
+    'klue',
+    'benchmark',
+    'juice-shop',
+    'owasp-zap',
+    'burp-suite',
+    'acunetix',
+    'appsec',
+    'autonomous-security',
+    'ai-pentesting',
+  ]
+draft: false
+layout: PostSimple
+canonicalUrl: 'https://shellvoide.com/blog/klue-dast-benchmark-juice-shop'
+---
+
+> [!NOTE]
+> KLUE is Shellvoide's autonomous pentesting platform. This is a dynamic-testing benchmark: no source code, no credentials, just four tools hitting a running application from the outside, the way an anonymous attacker would. The target was a live OWASP Juice Shop at `jshop.mate.academy`. Every finding below was reproduced by hand against that live app before it was counted. We grade ourselves on the same curve as everyone else.
+
+A static analyzer reads your code. A dynamic one has to break in. That difference is the whole story of this post.
+
+We recently [benchmarked four SAST tools](/blog/klue-sast-benchmark-juice-shop) against the source of OWASP Juice Shop, and the thing that sank the worst performer was noise: hundreds of findings, the overwhelming majority false, burying the real bugs. Dynamic application security testing (DAST) is a different animal with a different reputation. A DAST tool never sees a line of source. It points a crawler at the running app, maps whatever endpoints it can reach, fires a library of payloads at them, and reads the responses for evidence: a database error, a reflected tag, a header that should be there and isn't.
+
+So the question we cared about wasn't "how noisy is it." With DAST, the question that actually decides the outcome is colder: **can the tool even get to the vulnerability in the first place?** A signature is useless against an endpoint the crawler never found, behind an authentication wall it never crossed, exploiting a flaw that only exists when you chain two requests together. We wanted to see how that plays out on a real, modern, single-page app, not a static HTML testbed.
+
+Four tools, one live target, every finding scored against the same hand-built answer key:
+
+- **OWASP ZAP** 2.17.0, the open-source baseline.
+- **Burp Suite**, the scanner inside the tool most working pentesters use daily.
+- **Acunetix** by Invicti, a commercial enterprise DAST engine.
+- **KLUE**, Shellvoide's AI-driven dynamic testing platform.
+
+## The test rig
+
+Before scoring anything, we walked the live application by hand and wrote down every vulnerability a tool could observe from the outside: injection, broken access control, authentication and session flaws, misconfiguration, cryptographic weakness, exposed components, business-logic abuse. That manual inventory came to **37 distinct, dynamically-reachable vulnerabilities**, and it's the yardstick for everything that follows.
+
+Two of those 37 were found _only_ by the commercial scanners, not by KLUE: an internal IP address leaking through a password-reset response, and a response served with cacheable directives it shouldn't have. We lead with that on purpose. The answer key is not a transcript of KLUE's output; it was built independently, and KLUE misses two items on it.
+
+The ground rules were applied identically to all four:
+
+- **One dedup rule.** A weakness reported across forty URLs, or under six different CVE identifiers, is one finding, not forty, not six.
+- **No freebies.** Pure-informational notes that aren't vulnerabilities (a valid TLS certificate, an advisory that the target "looks like a modern web app") are dropped for everyone.
+- **Reproduce or it doesn't count.** Every surviving finding was confirmed by hand against the live app as a true or false positive.
+
+One fairness disclosure. Three tools ran against `jshop.mate.academy`. The Burp scan was pointed at a separate Juice Shop instance that returned intermittent `HTTP 503` errors mid-crawl, which starved its active scanner of pages to test, so read Burp's numbers as a floor, not a verdict on the tool. And as we'll get to, Burp's real strength was never its automated scanner anyway.
+
+## First, the tool has to get in
+
+Two walls decided this benchmark before a single payload landed.
+
+**The single-page-app wall.** Juice Shop is an Angular app. A classic crawler that parses HTML and follows links finds almost nothing, because the routes and API calls live in JavaScript that only exists after a browser executes it. ZAP said as much in its own report: it raised an alert literally titled _"Modern Web Application"_ noting _"no links have been found while there are scripts,"_ and recommended its AJAX spider _"may well be more effective."_ That is a scanner telling you, in writing, that it couldn't navigate the app it was aimed at. ZAP's findings came almost entirely from three things it could reach without rendering: `/`, `/robots.txt`, and `main.js`.
+
+**The authentication wall.** Everything here ran unauthenticated, KLUE included. The pattern scanners stayed locked out, so the entire authenticated surface (baskets, user records, password changes, order history) was simply invisible to them. KLUE had no credentials either. It made some: it forged a JSON Web Token with `alg=none` and an empty signature, claiming `"role":"admin"`, and the server accepted it. That one move turned the locked half of the app into open ground.
+
+And reach is not the same as effort. Acunetix's own log records **57,764 requests** fired over 27 minutes. For all of it, the engine surfaced exactly one real critical. KLUE crawled 22 URLs and surfaced fourteen critical-or-high findings. You can request every endpoint a thousand times and still never form the one idea that turns two dull responses into a breach.
+
+## The kill chain nobody else assembled
+
+The finding that defines the gap isn't a payload. It's a sequence of three perfectly ordinary requests:
+
+1. Forge a JWT with `alg=none`, no signature, `"role":"admin"`. The server trusts it.
+2. `GET /api/Users` with that token returns ~74KB (every account, every email, every password hash) to an anonymous caller.
+3. `GET /rest/user/change-password?new=NEW&repeat=NEW` with the same token resets the administrator's password. The endpoint never asks for the _current_ one.
+
+Anonymous to full administrator, no credentials, no exploit payload in sight. Each link is individually unremarkable. The vulnerability is the chain: a token-forgery weakness plus a missing-old-password weakness, reasoned together into account takeover. A signature engine has no rule for "these three boring requests, in this order, are a catastrophe."
+
+It wasn't the only finding with no shape for a scanner to match:
+
+- **Self-elevation to admin via mass assignment.** `POST /api/Users` with `"role":"admin"` in the body creates an administrator in one request. A scanner submits the registration form it can see; it never invents a privileged field it was never shown, because deciding what _shouldn't_ be settable is reasoning about intent.
+- **A null-byte ordering bug, then a credentials vault out the door.** The `/ftp` download checks the file extension against an allowlist, _then_ truncates at a URL-encoded null byte. `GET /ftp/package.json.bak%2500.md` passes the `.md` check and resolves to the `.bak`. KLUE used the same trick to pull `incident-support.kdbx`, a KeePass vault, straight off the public server. The bug lives in the _order_ of two individually-safe operations.
+- **An IDOR that looks like nothing.** With a token claiming `id: 1`, requesting `/rest/basket/2` through `/5` returned other users' baskets. Every token in that URL is benign; the flaw is that the value came from the client and was never checked against the caller.
+- **NoSQL injection hiding in a type.** `PATCH /rest/products/reviews` with a body of `{"id":{"$ne":null}}` rewrote 47 reviews at once. The attack isn't a string; it's an _object_ where the code expected a string, so the selector matches everything. Scanners fire string payloads at parameters; they don't reason that a field's _type_ is the attack surface.
+- **An open redirect that beats its own allowlist.** `/redirect` substring-matches the target against permitted URLs. A plain attacker URL is rejected with `406`; embed an allowlisted URL inside the query of an attacker-controlled one and it issues a `302` to the attacker. You only find it by understanding how the check works in order to defeat it.
+
+Every one of these is the work of understanding what the application is _supposed_ to do and catching where it betrays itself. That is what a human pentester does, and it's the thing a payload library structurally can't.
+
+## Mapped against what's actually there
+
+Recall and precision are fine summary statistics, but they hide the shape of the failure. The clearer picture is _which kinds of weakness each tool can see at all._ Here is every tool against the seven classes of vulnerability we catalogued on the live app, where each cell is "found out of present":
+
+<CoverageMatrix
+  title="Vulnerability classes reached, by tool"
+  columns={['KLUE', 'Acunetix', 'ZAP', 'Burp']}
+  highlightColumn={0}
+  rows={[
+    {
+      category: 'Injection (SQL / NoSQL)',
+      cells: [
+        { found: 3, total: 3 },
+        { found: 1, total: 3 },
+        { found: 0, total: 3 },
+        { found: 0, total: 3 },
+      ],
+    },
+    {
+      category: 'Broken Access Control / IDOR',
+      cells: [
+        { found: 8, total: 8 },
+        { found: 0, total: 8 },
+        { found: 0, total: 8 },
+        { found: 0, total: 8 },
+      ],
+    },
+    {
+      category: 'Authentication & Session',
+      cells: [
+        { found: 4, total: 4 },
+        { found: 0, total: 4 },
+        { found: 0, total: 4 },
+        { found: 0, total: 4 },
+      ],
+    },
+    {
+      category: 'Cryptographic Failures',
+      cells: [
+        { found: 5, total: 5 },
+        { found: 1, total: 5 },
+        { found: 1, total: 5 },
+        { found: 1, total: 5 },
+      ],
+    },
+    {
+      category: 'Security Misconfiguration',
+      cells: [
+        { found: 8, total: 10 },
+        { found: 5, total: 10 },
+        { found: 3, total: 10 },
+        { found: 1, total: 10 },
+      ],
+    },
+    {
+      category: 'Business-Logic Abuse',
+      cells: [
+        { found: 5, total: 5 },
+        { found: 0, total: 5 },
+        { found: 0, total: 5 },
+        { found: 0, total: 5 },
+      ],
+    },
+    {
+      category: 'Vulnerable Components',
+      cells: [
+        { found: 2, total: 2 },
+        { found: 1, total: 2 },
+        { found: 1, total: 2 },
+        { found: 0, total: 2 },
+      ],
+    },
+  ]}
+  caption="The scanners only light up in three rows: misconfiguration, one cryptographic header, and known-vulnerable components. Broken Access Control, Authentication, and Business-Logic Abuse are blank across all three. Those aren't gaps a bigger payload list closes; they're the boundary of the crawl-and-signature model itself."
+/>
+
+Read the columns and the story tells itself. The scanners are alive in exactly the places a passive check or a known-CVE lookup operates: missing headers, the jQuery version, the wildcard CORS, the open `/metrics`. Three entire rows (every access-control flaw, every authentication and session flaw, every business-logic abuse) are zero for ZAP, zero for Burp, zero for Acunetix. Acunetix's lone non-misconfiguration win is the search-parameter SQL injection, because injection still has a recognizable shape. Everything that requires reasoning about intent is dark.
+
+## The numbers
+
+For completeness, the conventional scorecard, scored against the 37-item baseline with every finding hand-verified:
+
+| Tool        | Valid | False positives | Recall    | Precision  | F1        |
+| ----------- | ----- | --------------- | --------- | ---------- | --------- |
+| **KLUE**    | 35    | **0**           | **94.6%** | **100.0%** | **97.2%** |
+| Acunetix    | 8     | 1               | 21.6%     | 88.9%      | 34.7%     |
+| OWASP ZAP   | 5     | 2               | 13.5%     | 71.4%      | 22.7%     |
+| Burp Suite  | 2     | 1               | 5.4%      | 66.7%      | 10.0%     |
+
+We won't dress up our own line. KLUE's recall is 94.6%, not 100%: it missed the internal-IP disclosure Acunetix caught and the cache-control weakness ZAP caught, and we're not pretending it didn't. Its precision is 100%: 35 findings, 35 real, zero false positives. The scanners' precision is respectable; their collapse is entirely on recall, and the matrix above shows exactly where.
+
+But on a live target, severity is what a defender feels first, and that's where the distance is starkest:
+
+<BarChart
+  title="Critical & high-severity issues found"
+  data={[
+    { label: 'KLUE', value: 14, highlight: true },
+    { label: 'Acunetix', value: 1 },
+    { label: 'ZAP', value: 0 },
+    { label: 'Burp', value: 0 },
+  ]}
+  caption="KLUE: 5 critical, 9 high. Acunetix: a single critical SQL injection. ZAP and Burp surfaced nothing above medium. An anonymous attacker is two requests from admin, and the scanner report reads 'no high-severity issues.'"
+/>
+
+## Where the scanners pulled their weight
+
+It would be cheap to overclaim, so let's be exact about what these tools did well.
+
+Acunetix found a genuine critical SQL injection, cleanly identified the vulnerable jQuery, flagged the unauthenticated Prometheus `/metrics` endpoint, and was the _only_ tool to catch an internal IP leaking through a password-reset response, a real finding KLUE missed. On the work a signature engine is built for, it was fast, deterministic, and correct. ZAP and Burp both reliably nailed the header and CORS hygiene (missing HSTS, missing CSP, the wildcard origin), which are real, worth fixing, and exactly what you want running on every commit in CI. None of these tools is broken; a tuned scanner is a sensible, cheap first pass.
+
+Their failure modes were honest, too. Acunetix's eight "possible XSS" hits shipped with its own caveat that they weren't exploitable through the JSON responses: calibrated doubt, not a confident lie. ZAP's two false positives were a timestamp in a JS bundle and the word "query" inside a SoundCloud URL, low-stakes noise. These tools mostly know what they don't know.
+
+## Crawling isn't attacking
+
+In our SAST writeup, the decisive thing AI changed was _trust_: a scanner that's 88% noise teaches a team to ignore it. In dynamic testing the decisive thing is _reach_, and the failure is quieter and more dangerous. A scanner that fires 57,764 requests and reports one critical doesn't annoy you; it reassures you. It tells a team the application is basically sound while an anonymous visitor is two requests from administrator.
+
+That gap isn't a tuning problem. Two of the three failure modes that have defined DAST for twenty years (the inability to crawl a JavaScript app, and structural blindness to access control and business logic) are _consequences of the crawl-and-signature model_, not bugs inside it. They're the price of the approach. A larger payload library doesn't teach a tool to forge a token, notice that an object ID belongs to someone else, or recognize that three harmless requests form a takeover.
+
+None of which retires the scanner. For recognizable injection, header hygiene, and known-vulnerable components, a deterministic engine in CI is repeatable and auditable in a way an AI's reasoning is not yet, and reasoning-based testing carries its own open questions around run-to-run consistency, explaining a given verdict, and the cost of driving a real browser and a model at scale. We'd rather name those than bury them.
+
+But the direction is hard to miss. An engine that renders the app like a browser, authenticates like an attacker, and reasons about intent like a reviewer reached 94.6% of the real vulnerabilities at perfect precision, including an entire class of chained, logic-level flaws the scanners couldn't see at all. The crawlers did what crawlers do. They crawled. Crawling isn't attacking.
+
+---
+
+_KLUE is part of Shellvoide's Penetration Testing as a Service (PTaaS) platform: autonomous security assessments powered by AI, across running applications, source code, and infrastructure. To run KLUE against your own app, or to see a full sample report from a benchmark like this one, reach out at [info@shellvoide.com](mailto:info@shellvoide.com)._

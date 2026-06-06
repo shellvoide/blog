@@ -5,7 +5,7 @@ import type { MDXComponents } from 'mdx/types'
 import Image from './Image'
 import CustomLink from './Link'
 import TableWrapper from './TableWrapper'
-import { BarChart, ScatterPlot } from './Chart'
+import { BarChart, ScatterPlot, CoverageMatrix } from './Chart'
 
 export const components: MDXComponents = {
   Image,
@@ -16,4 +16,5 @@ export const components: MDXComponents = {
   BlogNewsletterForm,
   BarChart,
   ScatterPlot,
+  CoverageMatrix,
 }
