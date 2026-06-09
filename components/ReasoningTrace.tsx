@@ -29,10 +29,7 @@ const CHIP =
 function renderText(text: string) {
   return text.split(CHIP).map((part, i) =>
     i % 2 === 1 ? (
-      <span
-        key={i}
-        className="rounded bg-emerald-400/10 px-1 text-emerald-300"
-      >
+      <span key={i} className="rounded bg-emerald-400/10 px-1 text-emerald-300">
         {part}
       </span>
     ) : (
@@ -41,7 +38,11 @@ function renderText(text: string) {
   )
 }
 
-export function ReasoningTrace({ label = 'klue · reasoning trace', caption, lines }: ReasoningTraceProps) {
+export function ReasoningTrace({
+  label = 'klue · reasoning trace',
+  caption,
+  lines,
+}: ReasoningTraceProps) {
   return (
     <figure className="not-prose my-8 overflow-hidden rounded-lg border border-gray-800 bg-gray-950 shadow-lg">
       <div className="flex items-center gap-2 border-b border-gray-800 bg-gray-900 px-4 py-2.5">
@@ -54,7 +55,7 @@ export function ReasoningTrace({ label = 'klue · reasoning trace', caption, lin
         <div className="min-w-[34rem] space-y-1.5">
           {lines.map((line, i) => (
             <div key={i} className="flex gap-3">
-              <span className="w-[68px] shrink-0 tabular-nums text-gray-600 select-none">
+              <span className="w-[68px] shrink-0 text-gray-600 tabular-nums select-none">
                 {line.time ?? ''}
               </span>
               <span
