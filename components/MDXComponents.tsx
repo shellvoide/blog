@@ -6,6 +6,7 @@ import Image from './Image'
 import CustomLink from './Link'
 import TableWrapper from './TableWrapper'
 import { BarChart, ScatterPlot, CoverageMatrix } from './Chart'
+import { ReasoningTrace } from './ReasoningTrace'
 
 export const components: MDXComponents = {
   Image,
@@ -17,4 +18,5 @@ export const components: MDXComponents = {
   BarChart,
   ScatterPlot,
   CoverageMatrix,
+  ReasoningTrace,
 }
