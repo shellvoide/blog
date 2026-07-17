@@ -1,9 +1,9 @@
 /** @type {import("pliny/config").PlinyConfig } */
 const siteMetadata = {
-  title: 'Blog - Shellvoide | Bridging voids in Enterprise Security | Certified Cybersecurity Services',
+  title: 'Shellvoide Blog - AI-Powered Cybersecurity, Compliance & Penetration Testing',
   author: 'Shellvoide',
-  headerTitle: 'Blog - Shellvoide',
-  description: 'Welcome to our blog. Here we share our thoughts and insights on cybersecurity, technology, and more. You can get in touch with us for any cybersecurity needs at info@shellvoide.com',
+  headerTitle: 'Shellvoide Blog',
+  description: 'The Shellvoide security blog: AI-driven penetration testing, vulnerability research, and application security insights from the team behind KLUE.',
   language: 'en-us',
   theme: 'light', // system, dark or light
   siteUrl: 'https://shellvoide.com/blog',
