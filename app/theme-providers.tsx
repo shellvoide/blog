@@ -1,11 +1,11 @@
 'use client'
 
 import { ThemeProvider } from 'next-themes'
-import siteMetadata from '@/data/siteMetadata'
 
 export function ThemeProviders({ children }: { children: React.ReactNode }) {
+  // Light theme only. Dark mode and the theme toggle have been removed.
   return (
-    <ThemeProvider attribute="class" defaultTheme={siteMetadata.theme} enableSystem>
+    <ThemeProvider attribute="class" forcedTheme="light" enableSystem={false}>
       {children}
     </ThemeProvider>
   )

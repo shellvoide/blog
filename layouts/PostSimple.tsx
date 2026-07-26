@@ -4,6 +4,7 @@ import { CoreContent } from 'pliny/utils/contentlayer'
 import type { Blog } from 'contentlayer/generated'
 import Comments from '@/components/Comments'
 import Link from '@/components/Link'
+import Tag from '@/components/Tag'
 import PageTitle from '@/components/PageTitle'
 import SectionContainer from '@/components/SectionContainer'
 import siteMetadata from '@/data/siteMetadata'
@@ -17,65 +18,95 @@ interface LayoutProps {
 }
 
 export default function PostLayout({ content, next, prev, children }: LayoutProps) {
-  const { path, slug, date, title } = content
+  const { slug, date, title, tags } = content
 
   return (
     <SectionContainer>
       <ScrollTopAndComment />
-      <article>
-        <div>
-          <header>
-            <div className="space-y-1 border-b border-gray-200 pb-10 text-center dark:border-gray-700">
-              <dl>
-                <div>
-                  <dt className="sr-only">Published on</dt>
-                  <dd className="text-base leading-6 font-medium text-gray-500 dark:text-gray-400">
-                    <time dateTime={date}>{formatDate(date, siteMetadata.locale)}</time>
-                  </dd>
-                </div>
-              </dl>
-              <div>
-                <PageTitle>{title}</PageTitle>
-              </div>
-            </div>
-          </header>
-          <div className="grid-rows-[auto_1fr] divide-y divide-gray-200 pb-8 xl:divide-y-0 dark:divide-gray-700">
-            <div className="divide-y divide-gray-200 xl:col-span-3 xl:row-span-2 xl:pb-0 dark:divide-gray-700">
-              <div className="prose dark:prose-invert max-w-none pt-10 pb-8">{children}</div>
-            </div>
-            {siteMetadata.comments && (
-              <div className="pt-6 pb-6 text-center text-gray-700 dark:text-gray-300" id="comment">
-                <Comments slug={slug} />
-              </div>
+      <article className="relative pt-6 pb-10">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[24rem]"
+          style={{
+            backgroundImage:
+              'radial-gradient(var(--color-primary-200) 1px, transparent 1px), radial-gradient(var(--color-gray-200) 1px, transparent 1px)',
+            backgroundSize: '26px 26px, 26px 26px',
+            backgroundPosition: '0 0, 13px 13px',
+            WebkitMaskImage: 'radial-gradient(ellipse 78% 72% at 50% 0%, black, transparent 72%)',
+            maskImage: 'radial-gradient(ellipse 78% 72% at 50% 0%, black, transparent 72%)',
+          }}
+        />
+        <header className="mx-auto max-w-3xl pt-4 pb-8 text-center sm:pt-8 sm:pb-10">
+          <div className="flex items-center justify-center gap-3 text-sm text-gray-500">
+            <time dateTime={date}>{formatDate(date, siteMetadata.locale)}</time>
+            {tags && tags.length > 0 && (
+              <>
+                <span className="text-gray-300">·</span>
+                <span className="text-primary-600 text-xs font-semibold tracking-wide uppercase">
+                  {tags[0].split(' ').join('-')}
+                </span>
+              </>
             )}
-            <footer>
-              <div className="flex flex-col text-sm font-medium sm:flex-row sm:justify-between sm:text-base">
-                {prev && prev.path && (
-                  <div className="pt-4 xl:pt-8">
-                    <Link
-                      href={`/${prev.path}`}
-                      className="text-primary-500 hover:text-primary-600 dark:hover:text-primary-400"
-                      aria-label={`Previous post: ${prev.title}`}
-                    >
-                      &larr; {prev.title}
-                    </Link>
-                  </div>
-                )}
-                {next && next.path && (
-                  <div className="pt-4 xl:pt-8">
-                    <Link
-                      href={`/${next.path}`}
-                      className="text-primary-500 hover:text-primary-600 dark:hover:text-primary-400"
-                      aria-label={`Next post: ${next.title}`}
-                    >
-                      {next.title} &rarr;
-                    </Link>
-                  </div>
-                )}
-              </div>
-            </footer>
           </div>
+          <div className="mt-4">
+            <PageTitle>{title}</PageTitle>
+          </div>
+        </header>
+
+        <div className="prose mx-auto max-w-3xl pb-8">{children}</div>
+
+        {tags && tags.length > 0 && (
+          <div className="mx-auto max-w-3xl pt-2">
+            <div className="flex flex-wrap items-center gap-y-2">
+              {tags.map((tag) => (
+                <Tag key={tag} text={tag} />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {(prev?.path || next?.path) && (
+          <nav className="mx-auto mt-10 flex max-w-3xl flex-col gap-4 text-sm font-medium sm:flex-row sm:justify-between sm:text-base">
+            <div>
+              {prev?.path && (
+                <Link
+                  href={`/${prev.path}`}
+                  className="text-primary-600 hover:text-primary-700 transition-colors"
+                  aria-label={`Previous post: ${prev.title}`}
+                >
+                  &larr; {prev.title}
+                </Link>
+              )}
+            </div>
+            <div className="sm:text-right">
+              {next?.path && (
+                <Link
+                  href={`/${next.path}`}
+                  className="text-primary-600 hover:text-primary-700 transition-colors"
+                  aria-label={`Next post: ${next.title}`}
+                >
+                  {next.title} &rarr;
+                </Link>
+              )}
+            </div>
+          </nav>
+        )}
+
+        <div className="mx-auto mt-12 max-w-3xl">
+          <Link
+            href="/"
+            className="hover:text-primary-600 text-sm font-medium text-gray-500 transition-colors"
+            aria-label="Back to all posts"
+          >
+            &larr; Back to all posts
+          </Link>
         </div>
+
+        {siteMetadata.comments && (
+          <div className="mx-auto mt-10 max-w-3xl text-gray-700" id="comment">
+            <Comments slug={slug} />
+          </div>
+        )}
       </article>
     </SectionContainer>
   )

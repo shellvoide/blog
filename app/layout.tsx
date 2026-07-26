@@ -90,20 +90,19 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         href={`${basePath}/static/favicons/safari-pinned-tab.svg`}
         color="#5bbad5"
       />
-      <meta name="msapplication-TileColor" content="#000000" />
-      <meta name="theme-color" media="(prefers-color-scheme: light)" content="#16a34a" />
-      <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#15803d" />
+      <meta name="msapplication-TileColor" content="#ffffff" />
+      <meta name="theme-color" content="#ffffff" />
       <link rel="alternate" type="application/rss+xml" href={`${basePath}/feed.xml`} />
-      <body className="bg-white pl-[calc(100vw-100%)] text-gray-900 antialiased dark:bg-gray-950 dark:text-gray-100">
+      <body className="bg-white pl-[calc(100vw-100%)] text-gray-900 antialiased">
         <ThemeProviders>
           <Analytics analyticsConfig={siteMetadata.analytics as AnalyticsConfig} />
-          <SectionContainer>
-            <SearchProvider searchConfig={siteMetadata.search as SearchConfig}>
-              <Header />
+          <SearchProvider searchConfig={siteMetadata.search as SearchConfig}>
+            <Header />
+            <SectionContainer>
               <main className="mb-auto">{children}</main>
-            </SearchProvider>
-            <Footer />
-          </SectionContainer>
+            </SectionContainer>
+          </SearchProvider>
+          <Footer />
         </ThemeProviders>
       </body>
     </html>
