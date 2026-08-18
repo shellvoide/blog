@@ -27,21 +27,21 @@ canonicalUrl: 'https://shellvoide.com/blog/supabase-cross-org-ai-opt-in-authoriz
 ---
 
 > [!NOTE]
-> **KLUE** is Shellvoide's AI Security Engineer for Compliance, Continuous Pentesting, Vulnerability Assessment and Secure CI/CD pipelines. This writeup covers one finding from a source-code engagement against Supabase's open-source platform, responsibly disclosed and fixed. When we shared it, Supabase told us:
->
 > _"klue submitted an impactful report, which helped us improve privacy controls within the hosted Supabase platform. This was an **obscure bug, not easily identified** and we greatly appreciate klue's diligence in finding and reporting it."_
 >
 > <u>**Supabase**</u>
 
-Picture the control on your Supabase organization that decides how much of a project's data may be handed to a third-party AI provider. An owner sets it. Turn it to `disabled` and, in principle, nothing about that project ever leaves for a model provider again. That setting is a _promise the platform makes on the owner's behalf_.
+So we left KLUE, our autonomous security engineer, running against Supabase's open-source platform for a few hours. No scanner, no checklist. Just an agent reading the codebase the way a patient reviewer would, endpoint by endpoint, holding the whole application in its head at once.
 
-This is the story of how an ordinary _member_ of that organization could quietly break the promise. No elevated role. No forged token. Not a single permission check failing anywhere along the way.
+Supabase is not a target that falls over. They are a serious engineering shop and it shows, so most of what KLUE reached for came back a clean negative. But buried in the AI Assistant, the feature that lets you ask questions about your own database in plain English, it caught something quiet and genuinely nasty. Quiet enough that when we reported it, Supabase called it _an obscure bug, not easily identified_, which is about the nicest thing a maintainer ever says about a hole in their own code.
 
-Most authorization bugs are a **missing** check on one identifier: you ask for object `42`, the server forgets to confirm object `42` is yours, and hands it over. This one is stranger, and more interesting, because _both_ identifiers in the request were checked, and checked _correctly_. The caller genuinely belonged to the organization they named. The caller genuinely had access to the project they named. Nothing was forged, nothing was escalated.
+Here is the setting. There is a control on your Supabase organization that decides how much of a project's data may be handed to a third-party AI provider. An owner sets it. Turn it to `disabled` and, in principle, nothing about that project ever leaves for a model provider again. That setting is a _promise the platform makes on the owner's behalf_.
 
-The flaw is that nobody ever checked whether those two things had anything to do with _each other_.
+And this is the story of how an ordinary _member_ of that organization could quietly break the promise. No elevated role. No forged token. Not a single permission check failing anywhere along the way.
 
-Supabase, quoted above, called it an _obscure bug, not easily identified_, and that phrase is the whole story here. Relational authorization bugs survive review precisely because every line looks correct on its own. To see this one, you have to hold two independently valid facts in mind at once and notice that the line connecting them was never drawn.
+Because most authorization bugs are a **missing** check on one identifier: you ask for object `42`, the server forgets to confirm object `42` is yours, and hands it over. This one is stranger, and more interesting, because _both_ identifiers in the request were checked, and checked _correctly_. The caller genuinely belonged to the organization they named. The caller genuinely had access to the project they named. Nothing was forged, nothing was escalated.
+
+The flaw is that nobody ever checked whether those two things had anything to do with _each other_. Relational authorization bugs survive review precisely because every line looks correct on its own. To see this one, you have to hold two independently valid facts in mind at once and notice that the line connecting them was never drawn.
 
 ## The control that was supposed to hold
 
