@@ -1,6 +1,6 @@
 ---
-title: 'Governed by the Wrong Org: A Cross-Tenant Authorization Bypass in Supabase''s AI Assistant'
-summary: 'A case study from a KLUE engagement against Supabase. The organization that governs how much of your project data reaches third-party AI providers was resolved from a slug the caller puts in the request body, and the server never checked that the project belonged to that org. An ordinary member could name a permissive organization they own and override their own org''s data-governance decision, and collapse a HIPAA tracing-suppression control. Responsibly disclosed, fixed, and acknowledged by Supabase.'
+title: "Governed by the Wrong Org: A Cross-Tenant Authorization Bypass in Supabase's AI Assistant"
+summary: "A case study from a KLUE engagement against Supabase. The organization that governs how much of your project data reaches third-party AI providers was resolved from a slug the caller puts in the request body, and the server never checked that the project belonged to that org. An ordinary member could name a permissive organization they own and override their own org's data-governance decision, and collapse a HIPAA tracing-suppression control. Responsibly disclosed, fixed, and acknowledged by Supabase."
 date: '2026-08-18'
 lastmod: '2026-08-18'
 authors: ['appsec-research']
@@ -21,7 +21,7 @@ tags:
     'appsec',
     'pentesting',
   ]
-draft: false
+draft: true
 layout: PostSimple
 canonicalUrl: 'https://shellvoide.com/blog/supabase-cross-org-ai-opt-in-authorization-bypass'
 ---
@@ -55,7 +55,7 @@ There is a second, stricter control layered on top for regulated tenants. Organi
 // apps/studio/lib/ai/braintrust-logger.ts
 if (projectRegion === undefined || projectRegion.startsWith('eu-')) return false
 if (orgHasHipaaAddon === undefined) return false
-if (orgHasHipaaAddon && projectIsSensitive !== false) return false   // HIPAA suppression
+if (orgHasHipaaAddon && projectIsSensitive !== false) return false // HIPAA suppression
 return true
 ```
 
@@ -90,7 +90,7 @@ The subtle part, and the reason this passes review, is that each identifier **is
 The HIPAA suppression collapses through the exact same seam:
 
 ```ts
-if (orgHasHipaaAddon && projectIsSensitive !== false) return false   // collapses when orgSlug is spoofed
+if (orgHasHipaaAddon && projectIsSensitive !== false) return false // collapses when orgSlug is spoofed
 ```
 
 Here `projectRegion` and `projectIsSensitive` come from the _real_ project via `getProjectAIDetails({ projectRef })`, but `orgHasHipaaAddon` comes from the _caller-named_ org via `getOrgAIDetails({ orgSlug })`. Name a non-HIPAA organization, and `orgHasHipaaAddon` goes to `false`, the suppression branch never fires, and tracing is re-enabled for a HIPAA-covered, sensitivity-flagged project. _The project's own attributes never changed._ Only the org they were judged against did.
@@ -102,8 +102,16 @@ The first thing that made this a finding rather than a one-off oddity was confir
 <ReasoningTrace
   label="klue · confirming the pattern spans four endpoints"
   lines={[
-    { time: '03:56', role: 'AGENT', text: `Step 3's command produces exactly the expected four call sites: getOrgAIDetails is imported or invoked in code/complete.ts, sql/generate-v4.ts, sql/policy.ts and feedback/rate.ts. Same orgSlug-derived pattern at each.` },
-    { time: '03:57', role: 'AGENT', text: `includeSchema is derived at line 186, so the reproducer range should start there to show the complete causal link in one command: orgSlug to getOrgAIDetails to aiOptInLevel to includeSchema to fetchSchemas(projectRef). The spoofable input and the sensitive sink are five lines apart.` },
+    {
+      time: '03:56',
+      role: 'AGENT',
+      text: `Step 3's command produces exactly the expected four call sites: getOrgAIDetails is imported or invoked in code/complete.ts, sql/generate-v4.ts, sql/policy.ts and feedback/rate.ts. Same orgSlug-derived pattern at each.`,
+    },
+    {
+      time: '03:57',
+      role: 'AGENT',
+      text: `includeSchema is derived at line 186, so the reproducer range should start there to show the complete causal link in one command: orgSlug to getOrgAIDetails to aiOptInLevel to includeSchema to fetchSchemas(projectRef). The spoofable input and the sensitive sink are five lines apart.`,
+    },
   ]}
 />
 
@@ -114,9 +122,21 @@ This is the part that separates a _real_ relational-authz finding from a hopeful
 <ReasoningTrace
   label="klue · locating the defect precisely"
   lines={[
-    { time: '05:28', role: 'AGENT', text: `The execute_sql sanitizer is fail-safe: arrays become a placeholder, non-arrays become undefined, so data doesn't survive either way. And filterToolsByOptInLevel drops any tool absent from the category map rather than allowing it.` },
-    { time: '05:29', role: 'AGENT', text: `This is genuinely well-built and fail-closed at two points: unmapped tools are dropped from the set entirely, isToolAllowed returns false for unknown categories, and tools above the opt-in level are swapped for a privacy stub rather than executed.` },
-    { time: '05:29', role: 'AGENT', text: `That sharpens the framing. The enforcement mechanism is sound; only the input feeding it is spoofable. The fix is not to harden the gate, it is to stop letting the caller choose which organization's policy the gate reads.` },
+    {
+      time: '05:28',
+      role: 'AGENT',
+      text: `The execute_sql sanitizer is fail-safe: arrays become a placeholder, non-arrays become undefined, so data doesn't survive either way. And filterToolsByOptInLevel drops any tool absent from the category map rather than allowing it.`,
+    },
+    {
+      time: '05:29',
+      role: 'AGENT',
+      text: `This is genuinely well-built and fail-closed at two points: unmapped tools are dropped from the set entirely, isToolAllowed returns false for unknown categories, and tools above the opt-in level are swapped for a privacy stub rather than executed.`,
+    },
+    {
+      time: '05:29',
+      role: 'AGENT',
+      text: `That sharpens the framing. The enforcement mechanism is sound; only the input feeding it is spoofable. The fix is not to harden the gate, it is to stop letting the caller choose which organization's policy the gate reads.`,
+    },
   ]}
 />
 
@@ -133,16 +153,26 @@ The proof came in two halves, and the first half touches no live account at all.
 function isTracingAllowed(projectRegion, orgHasHipaaAddon, projectIsSensitive) {
   if (projectRegion === undefined || projectRegion.startsWith('eu-')) return false
   if (orgHasHipaaAddon === undefined) return false
-  if (orgHasHipaaAddon && projectIsSensitive !== false) return false   // HIPAA suppression
+  if (orgHasHipaaAddon && projectIsSensitive !== false) return false // HIPAA suppression
   return true
 }
-const region = 'us-east-1', sensitive = true   // real project: US, HIPAA-covered, sensitive
-console.log('honest  (real HIPAA org):   orgHasHipaaAddon=true  ->', isTracingAllowed(region, true,  sensitive))
-console.log('spoofed (attacker org):     orgHasHipaaAddon=false ->', isTracingAllowed(region, false, sensitive))
+const region = 'us-east-1',
+  sensitive = true // real project: US, HIPAA-covered, sensitive
+console.log(
+  'honest  (real HIPAA org):   orgHasHipaaAddon=true  ->',
+  isTracingAllowed(region, true, sensitive)
+)
+console.log(
+  'spoofed (attacker org):     orgHasHipaaAddon=false ->',
+  isTracingAllowed(region, false, sensitive)
+)
 
-const includeSchema = (level) => level !== 'disabled'   // exact expression from complete.ts
+const includeSchema = (level) => level !== 'disabled' // exact expression from complete.ts
 console.log("owner's setting (disabled):  includeSchema =", includeSchema('disabled'))
-console.log('attacker org (permissive):   includeSchema =', includeSchema('schema_and_log_and_data'))
+console.log(
+  'attacker org (permissive):   includeSchema =',
+  includeSchema('schema_and_log_and_data')
+)
 ```
 
 ```text
@@ -197,8 +227,16 @@ Even human review, which absolutely _could_ catch this, has to survive a specifi
 <ReasoningTrace
   label="klue · the gap the test suite never covered"
   lines={[
-    { time: '04:41', role: 'AGENT', text: `The e2e suite is functional rather than security-focused. There's no test asserting that one organization's settings cannot govern another organization's project.` },
-    { time: '04:41', role: 'AGENT', text: `That's context, not a defect in itself, but it's why the remediation should recommend adding exactly such a regression test: pair an org slug with a project it doesn't own and assert the request is rejected before any schema is read.` },
+    {
+      time: '04:41',
+      role: 'AGENT',
+      text: `The e2e suite is functional rather than security-focused. There's no test asserting that one organization's settings cannot govern another organization's project.`,
+    },
+    {
+      time: '04:41',
+      role: 'AGENT',
+      text: `That's context, not a defect in itself, but it's why the remediation should recommend adding exactly such a regression test: pair an org slug with a project it doesn't own and assert the request is rejected before any schema is read.`,
+    },
   ]}
 />
 
