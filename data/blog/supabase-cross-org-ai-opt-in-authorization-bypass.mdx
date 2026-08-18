@@ -1,0 +1,217 @@
+---
+title: 'Governed by the Wrong Org: A Cross-Tenant Authorization Bypass in Supabase''s AI Assistant'
+summary: 'A case study from a KLUE engagement against Supabase. The organization that governs how much of your project data reaches third-party AI providers was resolved from a slug the caller puts in the request body, and the server never checked that the project belonged to that org. An ordinary member could name a permissive organization they own and override their own org''s data-governance decision, and collapse a HIPAA tracing-suppression control. Responsibly disclosed, fixed, and acknowledged by Supabase.'
+date: '2026-08-18'
+lastmod: '2026-08-18'
+authors: ['appsec-research']
+tags:
+  [
+    'klue',
+    'case-study',
+    'bug-bounty',
+    'ai-pentesting',
+    'broken-authorization',
+    'bola',
+    'idor',
+    'multi-tenancy',
+    'supabase',
+    'ai-security',
+    'hipaa',
+    'autonomous-security',
+    'appsec',
+    'pentesting',
+  ]
+draft: false
+layout: PostSimple
+canonicalUrl: 'https://shellvoide.com/blog/supabase-cross-org-ai-opt-in-authorization-bypass'
+---
+
+> [!NOTE]
+> KLUE is Shellvoide's AI Security Engineer for Compliance, Continuous Pentesting, Vulnerability Assessment and Secure CI/CD pipelines. This writeup covers one finding from a source-code engagement against Supabase's open-source platform. The vulnerability was responsibly disclosed, fixed, and acknowledged by Supabase. The proof-of-concept below was performed **entirely against organizations and a project we control**; the reasoning excerpts are drawn from KLUE's own run log, lightly trimmed for length.
+
+Most authorization bugs are a missing check on a single identifier: you ask for object `42`, the server forgets to confirm object `42` is yours, and it hands it over. This one is different, and more interesting, because *both* identifiers in the request were checked perfectly. The caller genuinely belonged to the organization they named. The caller genuinely had access to the project they named. Every individual permission was verified.
+
+The bug is that nobody checked whether the two had anything to do with each other.
+
+Supabase lets an organization owner decide how much of a project's data may be transmitted to third-party AI model providers. That decision is the entire point of the control. KLUE found that the decision was being read from an organization slug the *caller* supplies in the request body, and then applied to a *separately-named project* with no check that the project belonged to that organization. So a member of a locked-down organization could name a different, permissive organization they happen to own, and thereby override their own organization's governance decision, for their own organization's project.
+
+Supabase's is not a target that falls over easily. When we shared the finding, their response was gracious about a bug they agreed was hard to see:
+
+> "klue submitted an impactful report, which helped us improve privacy controls within the hosted Supabase platform. This was an obscure bug, not easily identified and we greatly appreciate klue's diligence in finding and reporting it."
+>
+> — **Supabase**
+
+That "not easily identified" is the whole story of this post. The reason relational authorization bugs survive review is that every part of the code looks correct in isolation. You have to hold two correctly-authorized facts in your head at once and notice that the line connecting them was never drawn.
+
+## The control that was supposed to hold
+
+Supabase's Assistant can read your database schema, your query logs, even row data, and send it to a model provider to answer a prompt. Because that is real data leaving for a third party, the platform gates it behind an organization-level setting, `aiOptInLevel`, that an owner sets and that escalates through four postures:
+
+```text
+disabled  →  schema  →  schema_and_log  →  schema_and_log_and_data
+```
+
+At `disabled`, nothing about the project is sent. At `schema_and_log_and_data`, the model provider can receive schema (DDL), query logs, and actual row data. It is a deliberate, owner-level governance dial.
+
+There is a second, stricter control layered on top for regulated tenants. Organizations on a HIPAA plan get third-party prompt/completion tracing **suppressed** for any project flagged `is_sensitive`, so prompts and completions for sensitive, HIPAA-covered projects are never exported to a third-party observability vendor. That suppression lives in `isTracingAllowed()`:
+
+```ts
+// apps/studio/lib/ai/braintrust-logger.ts
+if (projectRegion === undefined || projectRegion.startsWith('eu-')) return false
+if (orgHasHipaaAddon === undefined) return false
+if (orgHasHipaaAddon && projectIsSensitive !== false) return false   // HIPAA suppression
+return true
+```
+
+Two controls, both correct-looking, both doing exactly what an owner would expect. The problem is where they get their inputs.
+
+## Two identifiers, authorized in isolation
+
+Four Assistant endpoints share one root cause:
+
+```text
+apps/studio/pages/api/ai/sql/generate-v4.ts
+apps/studio/pages/api/ai/sql/policy.ts
+apps/studio/pages/api/ai/code/complete.ts
+apps/studio/pages/api/ai/feedback/rate.ts
+```
+
+The clearest instance is `code/complete.ts`:
+
+```ts
+if (IS_PLATFORM && orgSlug && authorization && projectRef) {
+  const { aiOptInLevel: orgAIOptInLevel } = await getOrgAIDetails({ orgSlug, authorization }) // caller-supplied org
+  aiOptInLevel = orgAIOptInLevel
+}
+const includeSchema = !isClickhouse && aiOptInLevel !== 'disabled'
+const { schemas } = await fetchSchemas(includeSchema, { projectRef, connectionString, headers }) // a DIFFERENT org's project
+```
+
+Read the two commented lines together. `aiOptInLevel` — the governance posture that decides whether data leaves — is resolved from `orgSlug`, a value in the request body. Then `includeSchema` derived from it is used to fetch the schema of `projectRef`, a *different* value in the same body. Nothing ever checks that `projectRef` belongs to `orgSlug`.
+
+The subtle part, and the reason this passes review, is that each identifier **is** authorized, just on its own. `getOrgAIDetails({ orgSlug, authorization })` and `getProjectAIDetails({ projectRef, authorization })` both forward the caller's token, so the server does confirm the caller belongs to `orgSlug` and does confirm the caller can access `projectRef`. You cannot name an org or a project you have no rights to. What you *can* do is name two things you both have rights to that have no business being paired, and the server will pair them.
+
+The HIPAA suppression collapses through the exact same seam:
+
+```ts
+if (orgHasHipaaAddon && projectIsSensitive !== false) return false   // collapses when orgSlug is spoofed
+```
+
+Here `projectRegion` and `projectIsSensitive` come from the real project via `getProjectAIDetails({ projectRef })`, but `orgHasHipaaAddon` comes from the caller-named org via `getOrgAIDetails({ orgSlug })`. Name a non-HIPAA organization, and `orgHasHipaaAddon` goes to `false`, the suppression branch never fires, and tracing is re-enabled for a HIPAA-covered, sensitivity-flagged project. The project's own attributes never changed. Only the org they were judged against did.
+
+## What KLUE saw
+
+The first thing that made this a finding rather than a one-off oddity was confirming the pattern was systemic. KLUE mapped every Assistant endpoint that derived the opt-in level from a caller-supplied slug, and found the same shape at all four call sites, then traced the causal link forward to the exact line where the spoofable value turns into a data-fetch decision.
+
+<ReasoningTrace
+  label="klue · confirming the pattern spans four endpoints"
+  lines={[
+    { time: '03:56', role: 'AGENT', text: `Step 3's command produces exactly the expected four call sites: getOrgAIDetails is imported or invoked in code/complete.ts, sql/generate-v4.ts, sql/policy.ts and feedback/rate.ts. Same orgSlug-derived pattern at each.` },
+    { time: '03:57', role: 'AGENT', text: `includeSchema is derived at line 186, so the reproducer range should start there to show the complete causal link in one command: orgSlug -> getOrgAIDetails -> aiOptInLevel -> includeSchema -> fetchSchemas(projectRef). The spoofable input and the sensitive sink are five lines apart.` },
+  ]}
+/>
+
+## Enforcement was sound. The input wasn't.
+
+This is the part that separates a real relational-authz finding from a hopeful one. It would be easy to look at four endpoints leaking schema and conclude the tool-permission machinery was broken. KLUE checked, and it wasn't. The layer that decides which Assistant tools run at which opt-in level is genuinely well-built and fails closed. The defect is not in the enforcement; it is that the enforcement is fed an attacker-chosen input.
+
+<ReasoningTrace
+  label="klue · locating the defect precisely"
+  lines={[
+    { time: '05:28', role: 'AGENT', text: `The execute_sql sanitizer is fail-safe: arrays become a placeholder, non-arrays become undefined, so data doesn't survive either way. And filterToolsByOptInLevel drops any tool absent from the category map rather than allowing it.` },
+    { time: '05:29', role: 'AGENT', text: `This is genuinely well-built and fail-closed at two points: unmapped tools are dropped from the set entirely, isToolAllowed returns false for unknown categories, and tools above the opt-in level are swapped for a privacy stub rather than executed.` },
+    { time: '05:29', role: 'AGENT', text: `That sharpens the framing. The enforcement mechanism is sound; only the input feeding it is spoofable. The fix is not to harden the gate, it is to stop letting the caller choose which organization's policy the gate reads.` },
+  ]}
+/>
+
+That distinction is what made the report actionable rather than alarming. We weren't telling Supabase their permission model was broken. We were telling them a correct permission model was being asked the wrong question.
+
+## Proving it without touching anyone's data
+
+The proof came in two halves, and the first half touches no live account at all.
+
+**Half one, offline, against the source.** Lift the two guard expressions verbatim out of the codebase and run them with a real project's attributes held fixed while only the organization posture changes. If the outputs flip, the controls are governed by the org and not by the project, which is the whole claim.
+
+```js
+// verbatim from apps/studio/lib/ai/braintrust-logger.ts::isTracingAllowed()
+function isTracingAllowed(projectRegion, orgHasHipaaAddon, projectIsSensitive) {
+  if (projectRegion === undefined || projectRegion.startsWith('eu-')) return false
+  if (orgHasHipaaAddon === undefined) return false
+  if (orgHasHipaaAddon && projectIsSensitive !== false) return false   // HIPAA suppression
+  return true
+}
+const region = 'us-east-1', sensitive = true   // real project: US, HIPAA-covered, sensitive
+console.log('honest  (real HIPAA org):   orgHasHipaaAddon=true  ->', isTracingAllowed(region, true,  sensitive))
+console.log('spoofed (attacker org):     orgHasHipaaAddon=false ->', isTracingAllowed(region, false, sensitive))
+
+const includeSchema = (level) => level !== 'disabled'   // exact expression from complete.ts
+console.log("owner's setting (disabled):  includeSchema =", includeSchema('disabled'))
+console.log('attacker org (permissive):   includeSchema =', includeSchema('schema_and_log_and_data'))
+```
+
+```text
+=== HIPAA tracing suppression ===
+honest  (real HIPAA org):   orgHasHipaaAddon=true  -> false   (false = SUPPRESSED, correct)
+spoofed (attacker org):     orgHasHipaaAddon=false -> true    (true = RE-ENABLED for a sensitive HIPAA project => BYPASS)
+
+=== schema-fetch gate (includeSchema = aiOptInLevel !== "disabled") ===
+owner's setting (disabled):  includeSchema = false
+attacker org (permissive):   includeSchema = true    (true => named project DDL read & sent to the model provider)
+```
+
+The project's region and sensitivity flag are identical in both rows. The only thing that moved is which organization's posture was supplied, and both controls invert. That is the vulnerability proven at the level of the guard logic itself, with no target involved.
+
+**Half two, live, against our own organizations.** To show it end to end without exposing anyone's real data, we used two organizations and a project we control:
+
+1. In `ORG_B` (which owns `PROJECT_B`), set the AI opt-in level to **Disabled**.
+2. Create a second personal organization `ORG_A` and set its opt-in to the most permissive value, `schema_and_log_and_data`.
+3. Copy our own dashboard access token from an existing Assistant request in DevTools.
+4. Send the request pairing `ORG_A`'s slug with `ORG_B`'s project:
+
+```http
+POST https://supabase.com/dashboard/api/ai/code/complete
+Authorization: Bearer <my access token>
+Content-Type: application/json
+
+{"completionMetadata":{"textBeforeCursor":"select * from ","textAfterCursor":"","prompt":"complete this","selection":""},
+ "projectRef":"PROJECT_B","orgSlug":"ORG_A","language":"sql","dialect":"postgres"}
+```
+
+`PROJECT_B` belongs to `ORG_B`, whose opt-in is **Disabled**, so no schema for `PROJECT_B` should ever be read or forwarded, regardless of what slug sits in the body. Instead, with `orgSlug=ORG_A` the server derived the permissive posture, set `includeSchema=true`, and the completion came back reflecting `PROJECT_B`'s real table and column names. Swap only `orgSlug` back to `ORG_B` as a control, and the schema is not included. The server never checked that `projectRef` belonged to `orgSlug`. The same behavior reproduced on the other three endpoints, each reading `orgSlug` from the same body and applying it to the named `projectRef`.
+
+## What actually leaks
+
+We scope this precisely, because inflating it is how you lose a maintainer's trust on the next submission.
+
+An authenticated user who belongs to a restricted organization, and who also controls any organization with a more permissive posture, can do two concrete things:
+
+- **Exfiltrate governed project data against the owner's policy.** The owner's `aiOptInLevel` (say, `disabled`) is overridden, so the named project's schema, query logs, or actual row data are read and transmitted to third-party AI providers. The data belongs to a project inside the *restricted* organization, and only ordinary member access is required, no elevated role.
+- **Defeat a compliance control.** The HIPAA tracing suppression that keeps prompts and completions for sensitive projects out of a third-party observability vendor is collapsed by naming a non-HIPAA org, re-enabling that export for exactly the projects the control exists to protect. Because the opt-in level is spoofable in the same request, the exported payload can simultaneously be widened to include schema, logs, and rows.
+
+The honest boundary: this is a confidentiality breach of governed and regulated project data to third-party processors, driven by an ordinary org member. It is not a takeover, not a credential leak, and **self-hosted deployments are not affected** — all four paths are gated behind `IS_PLATFORM`, so this is a hosted-platform issue only.
+
+## Why a scanner doesn't get here, and why review didn't
+
+There is no payload for this. A DAST scanner sends a request, gets a response, and grades it against a signature. There is no signature for "these two body fields were each authorized correctly but should have been checked against each other." The bug is not in any single value; it is in an absent relationship between two valid values, and absence has no fingerprint.
+
+Static analysis struggles for the same reason. `getOrgAIDetails({ orgSlug, authorization })` is a properly authorized call. `getProjectAIDetails({ projectRef, authorization })` is a properly authorized call. A taint tracker following either one finds a clean, token-checked path and moves on. The defect only exists in the join, and the join is a check that isn't written down anywhere to be found.
+
+Even human review, which absolutely *could* catch this, has to survive a specific trap: every line reads as correct. To see the bug you have to notice that `orgSlug` and `projectRef` arrive from the same untrusted body, hold the fact that they are independently authorized, and *still* ask the one question the code never does. KLUE flagged it in exactly those terms, and then noticed the codebase had no test guarding against it either.
+
+<ReasoningTrace
+  label="klue · the gap the test suite never covered"
+  lines={[
+    { time: '04:41', role: 'AGENT', text: `The e2e suite is functional rather than security-focused. There's no test asserting that one organization's settings cannot govern another organization's project.` },
+    { time: '04:41', role: 'AGENT', text: `That's context, not a defect in itself, but it's why the remediation should recommend adding exactly such a regression test: pair an org slug with a project it doesn't own and assert the request is rejected before any schema is read.` },
+  ]}
+/>
+
+The remediation is small and precise, which is usually the case with relational-authz bugs: before trusting `orgSlug` to govern anything, confirm that `projectRef` actually belongs to it. One check, on the relationship, at each of the four call sites, plus the regression test that pins it.
+
+## Disclosure
+
+The finding was reported to Supabase with the full offline and live proof-of-concept, the exact four call sites, and an explicit statement of scope: what the leak does and does not expose, and the fact that self-hosted is unaffected. Supabase triaged it, confirmed it, improved the privacy controls in the hosted platform, and — as their note at the top of this post reflects — credited the diligence it took to surface it. One obscure bug, on a platform that had done nearly everything else right, found by holding a complete theory of two authorized identifiers in mind long enough to notice the line between them was never drawn.
+
+---
+
+_Want a run like this against your own application? Book an engagement at [shellvoide.com/book](https://shellvoide.com/book), or reach us at [info@shellvoide.com](mailto:info@shellvoide.com)._
