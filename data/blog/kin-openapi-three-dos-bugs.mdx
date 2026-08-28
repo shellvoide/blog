@@ -225,3 +225,29 @@ With that single check in place, all three requests return a clean validation er
 ## Finding 3: a NaN check that guards the wrong validator
 
 The third one is the pattern again, this time across a version boundary inside the library itself. kin-openapi supports two schema-validation engines: its own built-in visitor for OAS 3.0, and a dispatch to `santhosh-tekuri/jsonschema` for OAS 3.1's JSON Schema 2020-12 semantics. One of them refuses `NaN` and `Inf`. The other does not.
+
+The built-in visitor is explicit about it. `NaN` and `Inf` are not valid JSON numbers, so `visitJSON` rejects them outright:
+
+```go
+// openapi3/schema.go, the built-in visitor
+case float64:
+	if math.IsNaN(value) {
+		return ErrSchemaInputNaN
+	}
+	if math.IsInf(value, 0) {
+		return ErrSchemaInputInf
+	}
+```
+
+That is a stated policy: these values are not allowed. But for an OAS 3.1 spec, `VisitJSON` routes through `useJSONSchema2020`, which hands the value straight to the external validator without applying the same check:
+
+```go
+// openapi3/schema_jsonschema_validator.go
+func (schema *Schema) useJSONSchema2020(settings *schemaValidationSettings, value any) error {
+	validator, err := newJSONSchemaValidator(schema)
+	if err != nil {
+		return schema.visitJSON(settings, value)
+	}
+	return validator.validate(value) // value handed straight through, NaN and all
+}
+```
