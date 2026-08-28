@@ -130,3 +130,21 @@ github.com/getkin/kin-openapi/openapi3filter.decodeValue(...)
 ```
 
 The line the test prints after the request, "the process survived," never runs. The process exits non-zero. That is the difference between a bug that drops a connection and a bug that ends the server.
+
+The fix is to give the runtime validators the same memory the spec validator already has. Thread a visited-set through `visitJSON`, and a `seen` slice through `decodeValue`, so a schema that has already been entered short-circuits instead of recursing:
+
+```go
+func (schema *Schema) visitJSON(settings *schemaValidationSettings, value any) (err error) {
+	if settings.visitedSchemas == nil {
+		settings.visitedSchemas = make(map[*Schema]struct{})
+	}
+	if _, visited := settings.visitedSchemas[schema]; visited {
+		return nil
+	}
+	settings.visitedSchemas[schema] = struct{}{}
+	defer delete(settings.visitedSchemas, schema)
+	// ... rest of function ...
+}
+```
+
+Applied at both sites, the same `GET /test?data=x` returns a clean `400` instead of killing the process. The guard was never novel. It already existed twenty lines away, in `validate()`.
