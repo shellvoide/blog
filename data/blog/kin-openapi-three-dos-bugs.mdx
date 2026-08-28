@@ -107,7 +107,7 @@ What made this a finding rather than a curiosity was KLUE noticing that the two 
   ]}
 />
 
-That second line is the whole severity argument. A normal Go panic is per-goroutine and recoverable, so behind a standard `net/http` server it only kills the one connection. A stack overflow is a fatal runtime error: `recover()` does not catch it, the per-connection recovery `net/http` installs does nothing, and the entire process exits. One request takes down every unrelated client on the same instance.
+That second line is the whole severity argument. A normal Go panic is per-goroutine and recoverable, so behind a standard `net/http` server it only kills the one connection. A stack overflow is a fatal runtime error: `recover()` does not catch it, the per-connection recovery `net/http` installs does nothing, and the entire process exits. One request takes down every unrelated client on the same instance, and no amount of handler-level defensiveness brings them back.
 
 To prove it end to end, KLUE built a legal OAS 3.0 spec with a self-referential `allOf` and served it behind an ordinary `net/http` handler:
 
