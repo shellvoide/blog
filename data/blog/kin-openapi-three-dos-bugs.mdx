@@ -251,3 +251,19 @@ func (schema *Schema) useJSONSchema2020(settings *schemaValidationSettings, valu
 	return validator.validate(value) // value handed straight through, NaN and all
 }
 ```
+
+Downstream, `jsonschema/v6` v6.0.2 tries to build a `*big.Rat` from the number with `big.Rat.SetString(fmt.Sprintf("%v", v))`. For `NaN` and `Inf` that parse fails silently and returns `nil`, and the next line dereferences the nil `*big.Rat` in `math/big.(*Rat).Cmp`. A crash.
+
+The delivery is a single HTTP request. YAML 1.2 decodes `.nan`, `.inf`, and `-.inf` into `math.NaN()` and `math.Inf(±1)`, so an OAS 3.1 endpoint that accepts a YAML body with any numeric constraint (`minimum`, `maximum`, `multipleOf`, and friends) is one `POST` away from the panic:
+
+```yaml
+paths:
+  /test:
+    post:
+      requestBody:
+        content:
+          application/yaml:
+            schema:
+              type: number
+              minimum: 0
+```
