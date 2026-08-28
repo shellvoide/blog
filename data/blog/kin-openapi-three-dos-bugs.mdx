@@ -148,3 +148,7 @@ func (schema *Schema) visitJSON(settings *schemaValidationSettings, value any) (
 ```
 
 Applied at both sites, the same `GET /test?data=x` returns a clean `400` instead of killing the process. The guard was never novel. It already existed twenty lines away, in `validate()`.
+
+## Finding 2: the fix that patched three paths and missed three more
+
+The second finding is the pattern in its purest form, because here the guard was not just present elsewhere in the codebase. It had been added _deliberately, as a security fix_, and it still did not cover every road to the same sink.
