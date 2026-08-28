@@ -44,3 +44,15 @@ Read on for how the machine got to each one, and why the shape they share is the
 ## Finding 1: a circular schema that crashes the process
 
 Start with the loudest of the three, because it is the cleanest illustration of the pattern.
+
+OpenAPI lets a schema refer to itself. That is a feature, not a mistake: recursive data structures (a comment with replies, a tree node with children) need recursive schemas, so kin-openapi's loader resolves circular `$ref`s on purpose. And the library handles the danger of that at spec-load time. `Schema.validate()`, the function that checks whether a spec is well-formed, carries stack-based cycle detection:
+
+```go
+// openapi3/schema.go
+func (schema *Schema) validate(ctx context.Context, stack []*Schema) ([]*Schema, error) {
+	if slices.Contains(stack, schema) {
+		return stack, nil // already on the stack: stop, this is a cycle
+	}
+	// ...
+	stack = append(stack, schema)
+```
