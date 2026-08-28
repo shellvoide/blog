@@ -267,3 +267,19 @@ paths:
               type: number
               minimum: 0
 ```
+
+<ReasoningTrace
+  label="klue · confirming the bypass and the fix boundary"
+  lines={[
+    {
+      time: '04:02',
+      role: 'AGENT',
+      text: `visitJSON refuses NaN/Inf with ErrSchemaInputNaN and ErrSchemaInputInf, so the library's own position is that these are illegal inputs. useJSONSchema2020, the OAS 3.1 path, never applies that guard. It is the same value the 3.0 path rejects, waved through on the 3.1 path.`,
+    },
+    {
+      time: '04:05',
+      role: 'AGENT',
+      text: `To prove useJSONSchema2020 is the reachable path and not something in kin-openapi's own code, bump only the transitive dep to jsonschema/v6 v6.0.3 and re-run. If the panic disappears without touching kin-openapi, the value really is flowing through the external validator. It does disappear: all three YAML payloads return a clean validation error.`,
+    },
+  ]}
+/>
