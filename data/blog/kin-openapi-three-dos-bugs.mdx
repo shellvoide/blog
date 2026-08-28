@@ -31,7 +31,7 @@ Most denial-of-service bugs are loud. Point a fuzzer at a parser, throw a millio
 
 So we left KLUE, our autonomous security engineer, reading kin-openapi. No fuzzer, no payload list, just an agent working through the OpenAPI toolkit that sits quietly under a large fraction of Go API gateways, mock servers, and request validators, the way a patient reviewer would, holding the whole pipeline in its head at once.
 
-It came back with three, and none of them is the kind of bug a fuzzer stumbles into. And the reason they are worth a post together, rather than three terse advisories, is that they are the _same bug wearing three costumes_. In each case kin-openapi already knew the dangerous condition was dangerous. It had written the guard. The guard was correct. It was simply installed on one code path while an equivalent, reachable path next to it went unprotected. Every one of these findings is a protection that stopped at the fork in the road.
+kin-openapi is not a target that falls over. It has been hardened by years of real-world use and a steady stream of prior security fixes, including several of the exact panic and recursion classes below, so most of what KLUE tried came back a clean negative. But three times it caught the same strange thing: the library already knew a condition was dangerous, had written the guard for it, and had left an equivalent, reachable path right next to it unprotected. Three findings, one shape, the _same bug wearing three costumes_. Every one of them is a protection that stopped at the fork in the road.
 
 Here is the slate KLUE walked away with:
 
