@@ -339,7 +339,7 @@ The circular-recursion bug sits at the top of the table because it is worse stil
   caption="CVSS 3.1 rates 7.0 and above as High. All three findings land at 7.5, above the threshold and accepted as High by the maintainers."
 />
 
-Naming that difference out loud is the point. All three are High, and we still say which one is High no matter how you host it and which two reach High on every realistic deployment but a bare `net/http` server. That precision, claiming exactly the impact each bug has and no more, is what keeps a maintainer trusting the next submission.
+Naming that difference out loud is the point. All three are High, and we still rank them: the recursion crash is a fatal runtime error that cannot be caught at all, where the other two are panics on the same validation path. That precision, claiming exactly the impact each bug has and no more, is what keeps a maintainer trusting the next submission.
 
 ## Why this shape is worth chasing
 
