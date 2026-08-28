@@ -120,7 +120,7 @@ What made this a finding rather than a curiosity was KLUE noticing that the two 
 
 That second line is the whole severity argument. A stack overflow is a fatal runtime error, not an ordinary panic: `recover()` does not catch it, and no handler-level defensiveness contains it. The entire process exits, and one request takes down every unrelated client on the same instance.
 
-To prove it end to end, KLUE built a legal OAS 3.0 spec with a self-referential `allOf` and served it behind an ordinary `net/http` handler:
+To prove it end to end, KLUE built a legal OAS 3.0 spec with a self-referential `allOf` and served it behind an ordinary HTTP handler:
 
 ```yaml
 components:
