@@ -80,3 +80,21 @@ func decodeValue(dec valueDecoder, param string, sm *openapi3.SerializationMetho
 ```
 
 Two unguarded recursion sites, both reachable from ordinary request and response validation, both fed by a schema the spec validator already blessed.
+
+What made this a finding rather than a curiosity was KLUE noticing that the two paths disagree about the same input, and then reasoning about _which kind_ of crash the recursion produces:
+
+<ReasoningTrace
+  label="klue · circular allOf, and why the crash is unrecoverable"
+  lines={[
+    {
+      time: '02:11',
+      role: 'AGENT',
+      text: `validate() contains cycle detection via a stack slice, so a self-referential allOf is accepted at spec time with no error. But visitJSON and decodeValue have no equivalent check. The same schema that spec validation tolerates will recurse without bound the moment it is used for request or response validation.`,
+    },
+    {
+      time: '02:13',
+      role: 'AGENT',
+      text: `Important distinction for severity: unbounded recursion in Go is not a panic, it is fatal error: stack overflow. recover() cannot catch it. net/http wraps each connection in a recover, but that does not help here, so the whole process dies, taking every other in-flight request with it. This is A:H regardless of host, unlike a normal nil-pointer panic.`,
+    },
+  ]}
+/>
