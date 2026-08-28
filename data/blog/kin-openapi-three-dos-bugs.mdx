@@ -113,3 +113,20 @@ components:
       properties:
         name: { type: string }
 ```
+
+A single `GET /test?data=x` is enough:
+
+```text
+Validate() ACCEPTED the spec with circular allOf $ref
+Sending GET /test?data=x through a real net/http server...
+runtime: goroutine stack exceeds 1000000000-byte limit
+fatal error: stack overflow
+
+github.com/getkin/kin-openapi/openapi3filter.decodeValue(...)
+	openapi3filter/req_resp_decoder.go:278
+github.com/getkin/kin-openapi/openapi3filter.decodeValue(...)
+	openapi3filter/req_resp_decoder.go:278
+... (repeats until the stack is exhausted)
+```
+
+The line the test prints after the request, "the process survived," never runs. The process exits non-zero. That is the difference between a bug that drops a connection and a bug that ends the server.
