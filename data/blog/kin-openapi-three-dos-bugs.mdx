@@ -328,7 +328,7 @@ This is why KLUE's opening move against kin-openapi, _is this value reachable by
 
 ## Disclosure
 
-All three findings were reported to the kin-openapi maintainers with full proof-of-concept code, the exact unguarded call sites, and per-deployment severity that separates the recoverable panics from the unrecoverable stack overflow. Each was reviewed and accepted: the circular-recursion crash, the incomplete-fix nil-`items` panic, and the OAS 3.1 `NaN`/`Inf` panic. Our thanks to the maintainers for a fast, straightforward triage, and for a codebase whose existing guards made the fixes obvious once the gaps were named.
+All three findings were reported to the kin-openapi maintainers with full proof-of-concept code, the exact unguarded call sites, and per-deployment severity that separates the recoverable panics from the unrecoverable stack overflow. Each was reviewed and accepted: the circular-recursion crash, the incomplete-fix nil-`items` panic, and the OAS 3.1 `NaN`/`Inf` panic. No CVE identifiers had been assigned at the time of writing; we will update this post with them if and when they issue. Our thanks to the maintainers for a fast, straightforward triage, and for a codebase whose existing guards made the fixes obvious once the gaps were named.
 
 ---
 
