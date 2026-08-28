@@ -243,7 +243,7 @@ func (d *urlValuesDecoder) parseArray(raw []string, schemaRef *openapi3.SchemaRe
 
 With that single check in place, all three requests return a clean validation error instead of a panic. Guarding the sink, not the symptom, is the difference between fixing this class and playing whack-a-mole with it, which is exactly what the first fix ended up doing.
 
-**Classification.** CWE-476 (NULL Pointer Dereference), an incomplete fix of [GHSA-p6wj-qrr4-pgh5](https://github.com/advisories/GHSA-p6wj-qrr4-pgh5). `CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:L` = 5.3 (Medium) behind `net/http` recovery, rising to 7.5 (High) with `A:H` where that recovery does not run. Affected from v0.136.0 through v0.144.0.
+**Classification.** CWE-476 (NULL Pointer Dereference), an incomplete fix of [GHSA-p6wj-qrr4-pgh5](https://github.com/advisories/GHSA-p6wj-qrr4-pgh5). `CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H` = 7.5 (High), the rating the maintainers accepted: an unrecovered panic is a full-process crash on non-`net/http` hosts and in goroutine-spawned validation. A plain `net/http` server bounds it to a per-request crash, which lowers the blast radius, not the class. Affected from v0.136.0 through v0.144.0.
 
 ## Finding 3: a NaN check that guards the wrong validator
 
