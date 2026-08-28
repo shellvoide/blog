@@ -321,7 +321,7 @@ The complete fix is three layers, in priority order: bump the transitive depende
 
 ## The discipline to rate them honestly
 
-Three denial-of-service bugs is an easy thing to over-sell, so it is worth being precise about how much each one actually costs, because they are not equal.
+Three denial-of-service bugs is an easy thing to over-sell, so it is worth being precise about what each one costs. All three were accepted as High-severity vulnerabilities, but they do not reach High for the same reason, and the difference is worth stating plainly.
 
 Two of the three, the nil-`items` panic and the YAML `NaN` panic, are ordinary Go panics. Behind a standard `net/http` server, `net/http` recovers them per connection: the client sees a dropped request, and the process keeps serving everyone else. That is a per-request denial of service, real but bounded, and we rate it `A:L` (CVSS 5.3) for that deployment. The full-process rating, `A:H` (CVSS 7.5), applies only where that recovery does not run, which is a genuine set of deployments (non-`net/http` hosts, or validation performed in an application-spawned goroutine) but not the common one. We reproduced both configurations rather than assume the worse one.
 
