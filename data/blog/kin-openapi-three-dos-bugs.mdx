@@ -325,7 +325,7 @@ Three denial-of-service bugs is an easy thing to over-sell, so it is worth being
 
 Two of the three, the nil-`items` panic and the YAML `NaN` panic, are Go panics raised inside request validation. An unrecovered panic on that path takes the whole process down: `A:H`, CVSS 7.5, the rating the maintainers accepted. Each fires on a single unauthenticated request against any application that validates OAS 3.1 traffic with `openapi3filter`, and we reproduced each one end to end.
 
-The circular-recursion bug is the exception, and that is the whole reason it sits at the top of the table. A stack overflow is a fatal runtime error, not a recoverable panic, so `net/http`'s per-connection recovery does nothing and the process dies regardless of host. There is no bounded, per-request version of it. We verified that directly: the same PoC that a `net/http` server would have shrugged off for the other two took the server down for this one. `A:H` everywhere, CVSS 7.5, and it earns High unconditionally, where the other two earn it on every realistic deployment except a bare `net/http` server.
+The circular-recursion bug sits at the top of the table because it is worse still. A stack overflow is a fatal runtime error, not an ordinary panic, so it cannot be caught or contained at any level: the process dies, full stop, and there is no version of it that touches only a single request. `A:H` everywhere, CVSS 7.5, and it earns High with no caveat at all.
 
 <BarChart
   title="All three clear the High-severity threshold"
