@@ -177,3 +177,19 @@ func (d *urlValuesDecoder) parseArray(raw []string, schemaRef *openapi3.SchemaRe
 ```
 
 `parseValue` dereferences the schema it is handed on its very first line, so a nil `Items` is a guaranteed crash, not a maybe.
+
+<ReasoningTrace
+  label="klue · tracing the incomplete fix to a shared sink"
+  lines={[
+    {
+      time: '01:44',
+      role: 'AGENT',
+      text: `The GHSA-p6wj-qrr4-pgh5 fix guards three entry points, but they are entry points, not the sink. urlValuesDecoder.parseArray is where Items is actually dereferenced, and it has no check. If I can reach parseArray with a nil-Items schema by any route the fix did not anticipate, the panic is back.`,
+    },
+    {
+      time: '01:46',
+      role: 'AGENT',
+      text: `Three routes reach it. A plain query parameter typed as array. A deepObject parameter with an array property, which lands in buildResObj, also unguarded. And a urlencoded body where the array sits inside an allOf sub-schema: decodeSchemaConstructs walks allOf/anyOf/oneOf and calls decodeProperty, which bypasses the top-level property guard entirely.`,
+    },
+  ]}
+/>
