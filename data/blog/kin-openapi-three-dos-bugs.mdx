@@ -283,3 +283,13 @@ paths:
     },
   ]}
 />
+
+That last experiment is the tidy proof. Upstream `jsonschema/v6` v6.0.3 already treats the nil `*big.Rat` dereference as a bug and fixes it, so bumping only that dependency, with no change to kin-openapi, turns all three payloads into clean errors:
+
+```text
+[nan]    Returned normally, err = ... invalid jsonType float64
+[inf]    Returned normally, err = ... invalid jsonType float64
+[neginf] Returned normally, err = ... invalid jsonType float64
+```
+
+The complete fix is three layers, in priority order: bump the transitive dependency to `v6.0.3`; add the same `NaN`/`Inf` guard to `useJSONSchema2020` that already lives in `visitJSON`, so a future dependency regression cannot re-open the hole; and reject these tokens at the YAML decoder, since they are not valid JSON and have no business reaching schema validation on either path.
