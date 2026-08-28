@@ -87,6 +87,8 @@ func decodeValue(dec valueDecoder, param string, sm *openapi3.SerializationMetho
 
 Two unguarded recursion sites, both reachable from ordinary request and response validation, both fed by a schema the spec validator already blessed.
 
+There are two ways this lands in production. The sharper one is an application that loads OpenAPI specs from an untrusted or semi-trusted source (an API gateway, a spec linter, a mock server, a docs generator): an attacker supplies a spec with a circular combinator and any later validation crashes the service. The quieter one is an application serving a fixed, trusted spec that simply happens to contain a recursive `allOf`. No malice is needed there at all; the first client request to the affected endpoint ends the process.
+
 What made this a finding rather than a curiosity was KLUE noticing that the two paths disagree about the same input, and then reasoning about _which kind_ of crash the recursion produces:
 
 <ReasoningTrace
