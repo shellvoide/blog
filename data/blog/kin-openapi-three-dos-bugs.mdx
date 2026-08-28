@@ -30,3 +30,11 @@ canonicalUrl: 'https://shellvoide.com/blog/kin-openapi-three-dos-bugs'
 kin-openapi is not a soft target. It is the OpenAPI toolkit that sits under a large fraction of Go API gateways, mock servers, spec linters, and request validators, and it has been hardened by years of real-world use and a steady stream of prior security fixes. When we handed it to KLUE, we were not expecting a pile of low-hanging bugs. We were curious whether an agent that reads a codebase the way a patient reviewer does, holding the whole validation pipeline in its head at once, could find the kind of defect that survives exactly because every individual line looks correct.
 
 It came back with three. And the reason they are worth a post together, rather than three terse advisories, is that they are the _same bug wearing three costumes_. In each case kin-openapi already knew the dangerous condition was dangerous. It had written the guard. The guard was correct. It was simply installed on one code path while an equivalent, reachable path next to it went unprotected. Every one of these findings is a protection that stopped at the fork in the road.
+
+Here is the slate KLUE walked away with:
+
+| #   | Denial-of-service finding                          | The guard that existed, and where it was missing                               | Severity          |
+| --- | -------------------------------------------------- | ------------------------------------------------------------------------------ | ----------------- |
+| 1   | Uncontrolled recursion on circular `allOf` schemas | Spec-time `validate()` detects cycles; the runtime validators do not           | High (7.5)        |
+| 2   | nil-`items` panic in `openapi3filter`              | A prior fix guarded three decoder paths; three more reach the same sink        | Medium–High (5.3–7.5) |
+| 3   | YAML `NaN`/`Inf` panic on OAS 3.1                  | The built-in visitor rejects `NaN`/`Inf`; the 3.1 dispatch hands it straight through | Medium–High (5.3–7.5) |
