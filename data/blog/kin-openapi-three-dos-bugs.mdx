@@ -303,3 +303,9 @@ Two of the three, the nil-`items` panic and the YAML `NaN` panic, are ordinary G
 The circular-recursion bug is the exception, and that is the whole reason it sits at the top of the table. A stack overflow is a fatal runtime error, not a recoverable panic, so `net/http`'s per-connection recovery does nothing and the process dies regardless of host. There is no bounded, per-request version of it. We verified that directly: the same PoC that a `net/http` server would have shrugged off for the other two took the server down for this one. `A:H` everywhere, CVSS 7.5, and it earns the rating in a way the other two only do conditionally.
 
 Naming that difference out loud is the point. Inflating the two recoverable panics to "full-process crash" full stop would have been the easy way to make the report look scarier, and it would have been wrong, and a maintainer would have caught it and trusted the next submission less.
+
+## Why this shape is worth chasing
+
+None of these three is exotic. Each is, in isolation, a modest bug: a missing nil check, a missing cycle check, a guard that did not get copied onto a second path. What makes them a pattern worth a post is that they are exactly the bugs that _survive_ hardening, because every ingredient of a fix is already present in the codebase. The dangerous condition is understood. The guard is written. Tests exist. And the vulnerability lives in the gap between the path that was protected and the path right next to it that was not.
+
+That gap is invisible to a scanner, which has no payload for "this correct guard is absent from an equivalent code path." It is nearly invisible to static analysis, because the guarded path and the unguarded path look structurally similar and both terminate in legitimate-looking code. It is even easy for human review to miss, because the reviewer sees the guard, confirms it is correct, and moves on without asking whether the same value can arrive by another door.
