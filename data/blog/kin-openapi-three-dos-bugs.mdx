@@ -68,3 +68,15 @@ func (schema *Schema) visitXOFOperations(settings *schemaValidationSettings, val
 		// no check that item.Value == schema (or any ancestor)
 		if err := v.visitJSON(settings, tempValue); err != nil { // recurses forever on a cycle
 ```
+
+The request path has the same shape in `openapi3filter`, where `decodeValue` recurses through `AllOf` with nothing to stop it:
+
+```go
+// openapi3filter/req_resp_decoder.go
+func decodeValue(dec valueDecoder, param string, sm *openapi3.SerializationMethod, schema *openapi3.SchemaRef, required bool) (any, bool, error) {
+	if len(schema.Value.AllOf) > 0 {
+		for _, sr := range schema.Value.AllOf {
+			value, f, err = decodeValue(dec, param, sm, sr, required) // no cycle check
+```
+
+Two unguarded recursion sites, both reachable from ordinary request and response validation, both fed by a schema the spec validator already blessed.
