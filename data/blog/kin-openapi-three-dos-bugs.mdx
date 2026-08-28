@@ -193,3 +193,18 @@ func (d *urlValuesDecoder) parseArray(raw []string, schemaRef *openapi3.SchemaRe
     },
   ]}
 />
+
+All three are reachable by an unauthenticated client with a single request against any app that validates OAS 3.1 traffic with `openapi3filter`. The `allOf` route is the one that most clearly proves the original fix was incomplete rather than merely narrow: the guard the advisory added only inspects _top-level_ properties, and `decodeSchemaConstructs` walks the combinator sub-schemas and calls `decodeProperty` on their members, sailing straight past it. The panic stack even names the frame that did it:
+
+```text
+Validate() ACCEPTED the spec
+Calling ValidateRequest directly...
+panic: runtime error: invalid memory address or nil pointer dereference
+github.com/getkin/kin-openapi/openapi3filter.(*urlValuesDecoder).parseValue(...)
+	req_resp_decoder.go:605
+github.com/getkin/kin-openapi/openapi3filter.(*urlValuesDecoder).parseArray(...)
+	req_resp_decoder.go:580
+...
+github.com/getkin/kin-openapi/openapi3filter.decodeProperty(...) // reached via the allOf walker
+	req_resp_decoder.go:1519
+```
