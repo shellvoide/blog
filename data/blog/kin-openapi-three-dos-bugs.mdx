@@ -339,7 +339,7 @@ The circular-recursion bug is the exception, and that is the whole reason it sit
   caption="CVSS 3.1 rates 7.0 and above as High. All three findings land at 7.5, above the threshold and accepted as High by the maintainers."
 />
 
-Naming that difference out loud is the point. Inflating the two recoverable panics to "full-process crash" full stop would have been the easy way to make the report look scarier, and it would have been wrong, and a maintainer would have caught it and trusted the next submission less.
+Naming that difference out loud is the point. All three are High, and we still say which one is High no matter how you host it and which two reach High on every realistic deployment but a bare `net/http` server. That precision, claiming exactly the impact each bug has and no more, is what keeps a maintainer trusting the next submission.
 
 ## Why this shape is worth chasing
 
