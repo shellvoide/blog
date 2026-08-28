@@ -56,3 +56,15 @@ func (schema *Schema) validate(ctx context.Context, stack []*Schema) ([]*Schema,
 	// ...
 	stack = append(stack, schema)
 ```
+
+So a spec whose `allOf` chain refers back to itself is _accepted_ by `Validate()` with no error. That is deliberate. The problem is what happens next. The functions that validate live traffic against that schema, the request decoder and the response visitor, have no equivalent guard. `visitJSON` calls `visitXOFOperations`, which walks the `allOf` / `anyOf` / `oneOf` slice and calls `visitJSON` again on each member:
+
+```go
+// openapi3/schema.go
+func (schema *Schema) visitXOFOperations(settings *schemaValidationSettings, value any) (err error, run bool) {
+	// ...
+	for idx, item := range v { // v = schema.OneOf / AnyOf / AllOf
+		v := item.Value
+		// no check that item.Value == schema (or any ancestor)
+		if err := v.visitJSON(settings, tempValue); err != nil { // recurses forever on a cycle
+```
