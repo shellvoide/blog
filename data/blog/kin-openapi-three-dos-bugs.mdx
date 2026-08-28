@@ -236,7 +236,7 @@ With that single check in place, all three requests return a clean validation er
 
 ## Finding 3: a NaN check that guards the wrong validator
 
-The third one is the pattern again, this time across a version boundary inside the library itself. kin-openapi supports two schema-validation engines: its own built-in visitor for OAS 3.0, and a dispatch to `santhosh-tekuri/jsonschema` for OAS 3.1's JSON Schema 2020-12 semantics. One of them refuses `NaN` and `Inf`. The other does not.
+The third is the pattern once more, this time straddling a version boundary inside the library itself. kin-openapi supports two schema-validation engines: its own built-in visitor for OAS 3.0, and a dispatch to `santhosh-tekuri/jsonschema` for OAS 3.1's JSON Schema 2020-12 semantics. One of them refuses `NaN` and `Inf`. The other does not.
 
 The built-in visitor is explicit about it. `NaN` and `Inf` are not valid JSON numbers, so `visitJSON` rejects them outright:
 
