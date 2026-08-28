@@ -317,7 +317,7 @@ That last experiment is the tidy proof. Upstream `jsonschema/v6` v6.0.3 already 
 
 The complete fix is three layers, in priority order: bump the transitive dependency to `v6.0.3`; add the same `NaN`/`Inf` guard to `useJSONSchema2020` that already lives in `visitJSON`, so a future dependency regression cannot re-open the hole; and reject these tokens at the YAML decoder, since they are not valid JSON and have no business reaching schema validation on either path.
 
-**Classification.** CWE-754 (Improper Check for Unusual or Exceptional Conditions). `CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H` = 7.5 (High), the rating the maintainers accepted: a full-process crash on non-`net/http` hosts and in goroutine-spawned validation, bounded to a per-request crash only behind a plain `net/http` server. Reachable on any OAS 3.1 endpoint that accepts a YAML body carrying a numeric constraint.
+**Classification.** CWE-754 (Improper Check for Unusual or Exceptional Conditions). `CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H` = 7.5 (High), the rating the maintainers accepted: the unrecovered panic crashes the whole process on a single unauthenticated request. Reachable on any OAS 3.1 endpoint that accepts a YAML body carrying a numeric constraint.
 
 ## The discipline to rate them honestly
 
