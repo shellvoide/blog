@@ -168,7 +168,7 @@ func (schema *Schema) visitJSON(settings *schemaValidationSettings, value any) (
 
 Applied at both sites, the same `GET /test?data=x` returns a clean `400` instead of killing the process. The guard was never novel. It already existed twenty lines away, in `validate()`.
 
-**Classification.** CWE-674 (Uncontrolled Recursion). `CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H` = 7.5 (High), and the `A:H` holds on every host because the crash is a fatal runtime error rather than a recoverable panic.
+**Classification.** CWE-674 (Uncontrolled Recursion). `CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H` = 7.5 (High), and the `A:H` holds on every host because the crash is a fatal runtime error, not an ordinary panic, so nothing can catch or contain it.
 
 ## Finding 2: the fix that patched three paths and missed three more
 
