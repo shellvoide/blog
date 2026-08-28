@@ -165,3 +165,15 @@ if propSchema.Value.Items == nil || propSchema.Value.Items.Value == nil { ... }
 // MultipartBodyDecoder -- GUARDED by the fix
 if valueSchema.Value.Items == nil { ... }
 ```
+
+KLUE's move was to not trust that a fix for "arrays with no items" had actually reached every place an array with no items gets decoded. It went looking for the sink, not the symptom, and found that `urlValuesDecoder.parseArray` (the method behind query-parameter and urlencoded-body array decoding) has no guard at all:
+
+```go
+// openapi3filter/req_resp_decoder.go
+func (d *urlValuesDecoder) parseArray(raw []string, schemaRef *openapi3.SchemaRef) ([]any, error) {
+	var value []any
+	for i, v := range raw {
+		item, err := d.parseValue(v, schemaRef.Value.Items) // Items is nil -> panic in parseValue
+```
+
+`parseValue` dereferences the schema it is handed on its very first line, so a nil `Items` is a guaranteed crash, not a maybe.
