@@ -113,7 +113,7 @@ What made this a finding rather than a curiosity was KLUE noticing that the two 
     {
       time: '02:13',
       role: 'AGENT',
-      text: `Important distinction for severity: unbounded recursion in Go is not a panic, it is fatal error: stack overflow. recover() cannot catch it. net/http wraps each connection in a recover, but that does not help here, so the whole process dies, taking every other in-flight request with it. This is A:H regardless of host, unlike a normal nil-pointer panic.`,
+      text: `Important distinction for severity: unbounded recursion in Go is not a panic, it is fatal error: stack overflow. recover() cannot catch it, so the whole process dies, taking every other in-flight request with it. This is A:H regardless of host: there is no configuration where it degrades to anything less than a full crash.`,
     },
   ]}
 />
