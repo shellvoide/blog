@@ -36,8 +36,8 @@ Here is the slate KLUE walked away with:
 | #   | Denial-of-service finding                          | The guard that existed, and where it was missing                               | Severity          |
 | --- | -------------------------------------------------- | ------------------------------------------------------------------------------ | ----------------- |
 | 1   | Uncontrolled recursion on circular `allOf` schemas | Spec-time `validate()` detects cycles; the runtime validators do not           | High (7.5)        |
-| 2   | nil-`items` panic in `openapi3filter`              | A prior fix guarded three decoder paths; three more reach the same sink        | Medium to High (5.3 to 7.5) |
-| 3   | YAML `NaN`/`Inf` panic on OAS 3.1                  | The built-in visitor rejects `NaN`/`Inf`; the 3.1 dispatch hands it straight through | Medium to High (5.3 to 7.5) |
+| 2   | nil-`items` panic in `openapi3filter`              | A prior fix guarded three decoder paths; three more reach the same sink        | High (7.5) |
+| 3   | YAML `NaN`/`Inf` panic on OAS 3.1                  | The built-in visitor rejects `NaN`/`Inf`; the 3.1 dispatch hands it straight through | High (7.5) |
 
 All three are reachable by an unauthenticated client with a single crafted request, and all three were reproduced end to end against `v0.144.0`, the latest release at the time of testing.
 
