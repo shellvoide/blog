@@ -1,3 +1,6 @@
 ---
 title: 'The Guard That Stopped at the Fork: Three Denial-of-Service Bugs in kin-openapi'
 summary: 'We pointed KLUE, our autonomous security engineer, at kin-openapi, the OpenAPI toolkit most Go API stacks are built on. It came back with three denial-of-service bugs that all rhyme: in each one the library already had the right guard, on the wrong code path. A circular schema crashes the whole process where spec-time validation would have caught it, an array with no items panics through decoder paths a prior fix never reached, and a YAML NaN slips past a NaN check that only guards the other validator. All three were responsibly disclosed and accepted by the maintainers.'
+date: '2026-08-28'
+lastmod: '2026-08-28'
+authors: ['appsec-research']
