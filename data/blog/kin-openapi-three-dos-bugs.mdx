@@ -327,6 +327,19 @@ Two of the three, the nil-`items` panic and the YAML `NaN` panic, are ordinary G
 
 The circular-recursion bug is the exception, and that is the whole reason it sits at the top of the table. A stack overflow is a fatal runtime error, not a recoverable panic, so `net/http`'s per-connection recovery does nothing and the process dies regardless of host. There is no bounded, per-request version of it. We verified that directly: the same PoC that a `net/http` server would have shrugged off for the other two took the server down for this one. `A:H` everywhere, CVSS 7.5, and it earns the rating in a way the other two only do conditionally.
 
+<BarChart
+  title="How each score moves with the host"
+  max={10}
+  data={[
+    { label: 'Recursion, any host', value: 7.5, display: '7.5', highlight: true },
+    { label: 'nil-items, net/http', value: 5.3, display: '5.3' },
+    { label: 'nil-items, other host', value: 7.5, display: '7.5' },
+    { label: 'NaN/Inf, net/http', value: 5.3, display: '5.3' },
+    { label: 'NaN/Inf, other host', value: 7.5, display: '7.5' },
+  ]}
+  caption="The two recoverable panics swing from 5.3 to 7.5 depending on whether net/http per-connection recovery sits in the path. The recursion crash does not swing: it is 7.5 everywhere."
+/>
+
 Naming that difference out loud is the point. Inflating the two recoverable panics to "full-process crash" full stop would have been the easy way to make the report look scarier, and it would have been wrong, and a maintainer would have caught it and trusted the next submission less.
 
 ## Why this shape is worth chasing
