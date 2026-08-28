@@ -41,6 +41,17 @@ Here is the slate KLUE walked away with:
 
 All three are reachable by an unauthenticated client with a single crafted request, and all three were reproduced end to end against `v0.144.0`, the latest release at the time of testing.
 
+<BarChart
+  title="CVSS base score behind a standard net/http server"
+  max={10}
+  data={[
+    { label: 'Circular recursion', value: 7.5, display: '7.5', highlight: true },
+    { label: 'nil-items panic', value: 5.3, display: '5.3' },
+    { label: 'YAML NaN/Inf', value: 5.3, display: '5.3' },
+  ]}
+  caption="In the most common deployment, net/http recovers the two panics per connection, so they land at Medium. Only the recursion crash, a fatal runtime error, stays High here, because no per-connection recovery can catch it."
+/>
+
 Read on for how the machine got to each one, and why the shape they share is the interesting part.
 
 ## How KLUE approached kin-openapi
