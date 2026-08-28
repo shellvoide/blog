@@ -63,7 +63,7 @@ func (schema *Schema) validate(ctx context.Context, stack []*Schema) ([]*Schema,
 	stack = append(stack, schema)
 ```
 
-So a spec whose `allOf` chain refers back to itself is _accepted_ by `Validate()` with no error. That is deliberate. The problem is what happens next. The functions that validate live traffic against that schema, the request decoder and the response visitor, have no equivalent guard. `visitJSON` calls `visitXOFOperations`, which walks the `allOf` / `anyOf` / `oneOf` slice and calls `visitJSON` again on each member:
+So a spec whose `allOf` chain refers back to itself is _accepted_ by `Validate()` with no error. That is deliberate, and correct. The problem is what happens next. The functions that validate live traffic against that schema, the request decoder and the response visitor, have no equivalent guard. `visitJSON` calls `visitXOFOperations`, which walks the `allOf` / `anyOf` / `oneOf` slice and calls `visitJSON` again on each member:
 
 ```go
 // openapi3/schema.go
