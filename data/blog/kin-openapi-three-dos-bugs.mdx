@@ -208,3 +208,16 @@ github.com/getkin/kin-openapi/openapi3filter.(*urlValuesDecoder).parseArray(...)
 github.com/getkin/kin-openapi/openapi3filter.decodeProperty(...) // reached via the allOf walker
 	req_resp_decoder.go:1519
 ```
+
+The remedy is one guard at the shared sink, plus one in the deepObject builder, rather than a fourth, fifth, and sixth guard bolted onto each new entry point as it is discovered:
+
+```go
+func (d *urlValuesDecoder) parseArray(raw []string, schemaRef *openapi3.SchemaRef) ([]any, error) {
+	if schemaRef.Value.Items == nil || schemaRef.Value.Items.Value == nil {
+		return nil, errors.New("array items schema is required for decoding")
+	}
+	// ...
+}
+```
+
+With that single check in place, all three requests return a clean validation error instead of a panic. Guarding the sink, not the symptom, is the difference between fixing this class and playing whack-a-mole with it, which is exactly what the first fix ended up doing.
