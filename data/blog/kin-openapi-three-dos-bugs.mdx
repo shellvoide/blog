@@ -64,6 +64,8 @@ KLUE does not scan. It runs a loop: form a hypothesis about where a defect could
 
 ## Finding 1: a circular schema that crashes the process
 
+**In plain terms:** a spec can be written so it points back at itself in a loop. When kin-openapi checks a request against that spec, it follows the loop forever until the service runs out of memory and crashes. One request is enough, and no error handling can catch it.
+
 Start with the loudest of the three. It is the cleanest illustration of the pattern, and the only one that takes the whole process down no matter how the app is hosted.
 
 OpenAPI lets a schema refer to itself. That is a feature, not a mistake: recursive data structures (a comment with replies, a tree node with children) need recursive schemas, so kin-openapi's loader resolves circular `$ref`s on purpose. And the library handles the danger of that at spec-load time. `Schema.validate()`, the function that checks whether a spec is well-formed, carries stack-based cycle detection:
