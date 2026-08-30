@@ -255,6 +255,8 @@ With that single check in place, all three requests return a clean validation er
 
 ## Finding 3: a NaN check that guards the wrong validator
 
+**In plain terms:** the values `NaN` (not a number) and `Infinity` are rejected by one of kin-openapi's two request checkers but not the other. Send one of them in a YAML request and the service crashes.
+
 The third is the pattern once more, this time straddling a version boundary inside the library itself. kin-openapi supports two schema-validation engines: its own built-in visitor for OAS 3.0, and a dispatch to `santhosh-tekuri/jsonschema` for OAS 3.1's JSON Schema 2020-12 semantics. One of them refuses `NaN` and `Inf`. The other does not.
 
 The built-in visitor is explicit about it. `NaN` and `Inf` are not valid JSON numbers, so `visitJSON` rejects them outright:
