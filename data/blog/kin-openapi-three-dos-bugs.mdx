@@ -31,6 +31,8 @@ Most denial-of-service bugs are loud. Point a fuzzer at a parser, throw a millio
 
 So we left KLUE, our autonomous security engineer, reading kin-openapi. No fuzzer, no payload list, just an agent working through the OpenAPI toolkit that sits quietly under a large fraction of Go API gateways, mock servers, and request validators, the way a patient reviewer would, holding the whole pipeline in its head at once.
 
+In plain terms: kin-openapi is the code that reads an incoming API request and checks it is valid before the rest of the app trusts it. A lot of Go services lean on it, so a crash bug there is a crash bug in all of them.
+
 kin-openapi is not a target that falls over. It has been hardened by years of real-world use and a steady stream of prior security fixes, including several of the exact panic and recursion classes below, so most of what KLUE tried came back a clean negative. But three times it caught the same strange thing: the library already knew a condition was dangerous, had written the guard for it, and had left an equivalent, reachable path right next to it unprotected. Three findings, one shape, the _same bug wearing three costumes_. Every one of them is a protection that stopped at the fork in the road.
 
 Here is the slate KLUE walked away with:
