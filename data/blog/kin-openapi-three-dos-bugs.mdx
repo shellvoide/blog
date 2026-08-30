@@ -1,5 +1,5 @@
 ---
-title: ' 3 Crash Bugs in kin-openapi, the OpenAPI Library Behind Many Go APIs'
+title: '3 Crash Bugs in kin-openapi, the OpenAPI Library Behind Many Go APIs'
 summary: 'We asked KLUE, our AI security agent, to review kin-openapi, a library that a large share of Go web APIs use to read and check incoming requests. It found three separate bugs that each let anyone crash the service with a single request. The pattern behind all three is the same: the library already had the right safety check, it was just missing on one of the paths that needed it. All three were reported, accepted, and fixed by the maintainers.'
 date: '2026-08-28'
 lastmod: '2026-08-28'
