@@ -1,6 +1,6 @@
 ---
 title: 'We Found 3 Crash Bugs in kin-openapi, a Library Many Go APIs Rely On'
-summary: 'We pointed KLUE, our autonomous security engineer, at kin-openapi, the OpenAPI toolkit most Go API stacks are built on. It came back with three denial-of-service bugs that all rhyme: in each one the library already had the right guard, on the wrong code path. A circular schema crashes the whole process where spec-time validation would have caught it, an array with no items panics through decoder paths a prior fix never reached, and a YAML NaN slips past a NaN check that only guards the other validator. All three were responsibly disclosed and accepted by the maintainers.'
+summary: 'We asked KLUE, our AI security agent, to review kin-openapi, a library that a large share of Go web APIs use to read and check incoming requests. It found three separate bugs that each let anyone crash the service with a single request. The pattern behind all three is the same: the library already had the right safety check, it was just missing on one of the paths that needed it. All three were reported, accepted, and fixed by the maintainers.'
 date: '2026-08-28'
 lastmod: '2026-08-28'
 authors: ['appsec-research']
