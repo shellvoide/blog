@@ -178,6 +178,8 @@ Applied at both sites, the same `GET /test?data=x` returns a clean `400` instead
 
 ## Finding 2: the fix that patched three paths and missed three more
 
+**In plain terms:** an earlier security fix plugged this kind of crash in three places but missed three more that reach the same code. Any one of them still crashes the service with a single request.
+
 The second finding is the pattern in its sharpest form, because here the guard was not just present elsewhere in the codebase. It had been added _deliberately, as a security fix_, and it still did not cover every road to the same sink.
 
 Under JSON Schema 2020-12, which OAS 3.1 adopts, an array schema is allowed to omit the `items` keyword entirely. kin-openapi's decoder assumed `items` was always present, so a spec with `type: array` and no `items` dereferenced a nil pointer and panicked. That was reported and fixed as [GHSA-p6wj-qrr4-pgh5](https://github.com/advisories/GHSA-p6wj-qrr4-pgh5). The fix added a nil-`items` guard to three decoder paths:
