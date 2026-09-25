@@ -126,6 +126,27 @@ if (config.allowAbsoluteUrls !== undefined) {
 
 Same tell: `this.defaults.allowAbsoluteUrls` is read off the ordinary defaults object, so a polluted `Object.prototype.allowAbsoluteUrls` satisfies the `!== undefined` check and feeds an attacker-chosen value into the branch that governs URL handling. It is the identical gadget wearing a different field name, which is exactly why KLUE flags the shape rather than the single line: a fix that only patches `method` and stops there leaves the twin sitting right next to it.
 
+<ReasoningTrace
+  label="klue · the same read, one field over"
+  lines={[
+    {
+      time: '03:16',
+      role: 'TOOL',
+      text: `Searching lib/core/Axios.js for other reads of this.defaults.*`,
+    },
+    {
+      time: '03:18',
+      role: 'AGENT',
+      text: `allowAbsoluteUrls has the same shape a few lines up: config.allowAbsoluteUrls is undefined when the caller omits it, so the else-if reads this.defaults.allowAbsoluteUrls, which is an inherited read on the same ordinary object. A polluted Object.prototype.allowAbsoluteUrls passes the !== undefined check and is copied into the request config.`,
+    },
+    {
+      time: '03:19',
+      role: 'AGENT',
+      text: `So this is not one line, it is a shape. Reporting the shape and both call sites, not just method. A patch that guards only method leaves the second read exploitable the same way.`,
+    },
+  ]}
+/>
+
 ## Proving it
 
 The proof is short, which is the point. Pollute the prototype the way any upstream bug would, then make an ordinary default-instance call with no method, and watch it leave as a delete:
@@ -161,11 +182,17 @@ config.method = (config.method || ownDefault || 'get').toLowerCase();
 
 With the read constrained to own properties, a polluted `Object.prototype.method` is no longer visible to the resolution at all: an unpolluted app behaves exactly as before, and a polluted one falls through to `'get'` the way the original author clearly intended. The same guard applied to `allowAbsoluteUrls` closes the sibling. The maintainers shipped a fix along these lines in axios 0.34.0 and 1.20.0.
 
-## Why this shape is worth chasing
+## Why a scanner does not get here, and why review did not
 
-A gadget is easy to wave off, because in isolation it does nothing and you can always say "well, you need another bug first." That framing is exactly backwards for a library like axios. Prototype pollution is one of the most common bug classes in the JavaScript ecosystem, and the whole danger of it is that a write to `Object.prototype` in one corner of an application silently changes the behavior of unrelated code in a completely different corner. A library used by a huge share of those applications is the ideal place for the far end of that chain to land. The pollution supplies the write. Axios, in the default instance path, supplied the read, and the read happened to control an HTTP method.
+There is _no payload_ for this. A DAST scanner sends a request, reads a response, and grades it against a signature. There is no signature for _"this default is read off an ordinary object, so a prototype polluted elsewhere decides its value."_ The request that triggers it, `axios.request({ url })`, is the most ordinary call the library has; nothing about it looks like an attack, because the attack is not in the request at all. It is in a `write` that happened somewhere else entirely, at some other time, to `Object.prototype`.
 
-What caught it was not a payload and not a rule. It was an agent reading a single line of default-resolution logic and asking the JavaScript-specific question that the `'get'` fallback made look unnecessary: _this default is read off an ordinary object, so is it really a default, or is it whatever the prototype chain last returned?_ On the default instance, with no own `method` ever set, it was the latter. KLUE found the divergence between the exploitable call shapes and the safe ones, named it honestly as a gadget rather than dressing it up as a standalone flaw, and checked the same shape one field over instead of stopping at the first hit. A human on our side confirmed the method flip and the safe-path behavior end to end against a running server. That is the honest division of labor: the machine reads every default in the pipeline and asks the awkward question at each one, and a person closes the loop.
+Static analysis struggles for the same reason. `this.defaults.method` is a completely legitimate property read, and `(config.method || this.defaults.method || 'get')` is textbook defensive defaulting: it even ends in a hard-coded `'get'` that reads like a guarantee. A taint tracker sees a local read of a config object and a safe literal fallback, and moves on. The defect is not in the value or the flow. It is that a _missing key_ on an ordinary object does not stop at `undefined`, it walks to the prototype, and no analyzer flags a normal object for the crime of having a prototype.
+
+Even human review has to survive a specific trap: the line looks correct, because it _is_ correct for every instance whose defaults are its own. To see the bug you have to hold three facts at once, that `this.defaults` is an ordinary object, that the default instance never sets `method` on it, and that an absent property therefore resolves through `Object.prototype`, and only then ask whether that last hop is reachable by an attacker. KLUE asked exactly that question, at exactly that line, and then did the thing that turns a line into a finding: it checked the same shape one field over and found the `allowAbsoluteUrls` twin.
+
+A gadget is easy to wave off, because in isolation it does nothing and you can always say "you need another bug first." That framing is backwards for a library like axios. Prototype pollution is one of the most common bug classes in the JavaScript ecosystem, and the whole danger of it is that a write to `Object.prototype` in one corner of an application silently changes the behavior of unrelated code in a completely different corner. A library used by a huge share of those applications is the ideal place for the far end of that chain to land. The pollution supplies the write. Axios, on the default instance path, supplied the read, and the read happened to control an HTTP method.
+
+We will not oversell it. KLUE named it a gadget, not a source, and said so in the run log before it reached us: it cannot pollute anything on its own, and an application with no prototype pollution anywhere is untouched. That honesty, claiming exactly the reach a bug has and no more, is what keeps a maintainer trusting the next submission. A human on our side confirmed the method flip and the safe-path behavior end to end against a running server. That is the honest division of labor: the machine reads every default in the pipeline and asks the awkward question at each one, and a person closes the loop.
 
 ## Disclosure
 
