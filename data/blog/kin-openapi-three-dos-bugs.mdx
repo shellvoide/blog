@@ -1,8 +1,8 @@
 ---
-title: '3 Crash Bugs in kin-openapi, the OpenAPI Library Behind Many Go APIs'
-summary: 'We asked KLUE, our AI security agent, to review kin-openapi, a library that a large share of Go web APIs use to read and check incoming requests. It found three separate bugs that each let anyone crash the service with a single request. The pattern behind all three is the same: the library already had the right safety check, it was just missing on one of the paths that needed it. All three were reported, accepted, and fixed by the maintainers.'
+title: 'Three High-Severity CVEs in kin-openapi, the OpenAPI Library Behind Many Go APIs'
+summary: 'We asked KLUE, our AI security agent, to review kin-openapi, a library that a large share of Go web APIs use to read and check incoming requests. It found three separate bugs that each let anyone crash the service with a single request. The pattern behind all three is the same: the library already had the right safety check, it was just missing on one of the paths that needed it. All three were reported, accepted, assigned CVEs (CVE-2026-100352, CVE-2026-100353, CVE-2026-100354), rated High, and fixed by the maintainers.'
 date: '2026-08-28'
-lastmod: '2026-08-28'
+lastmod: '2026-09-26'
 authors: ['appsec-research']
 tags:
   [
@@ -25,7 +25,19 @@ canonicalUrl: 'https://shellvoide.com/blog/kin-openapi-three-dos-bugs'
 ---
 
 > [!NOTE]
-> KLUE is Shellvoide's autonomous security engineer for continuous pentesting, vulnerability research, and secure CI/CD pipelines. This is a field report from a real run against [kin-openapi](https://github.com/getkin/kin-openapi), the OpenAPI 3 loader and request/response validator that a large share of Go API stacks quietly depend on. All three issues below were responsibly disclosed to the maintainers and accepted. The reasoning excerpts are lifted from the run log and lightly trimmed for length; every code snippet is quoted from the released source at the version tested, `v0.144.0`.
+> KLUE is Shellvoide's autonomous security engineer for continuous pentesting, vulnerability research, and secure CI/CD pipelines. This is a field report from a real run against [kin-openapi](https://github.com/getkin/kin-openapi), the OpenAPI 3 loader and request/response validator that a large share of Go API stacks quietly depend on. All three issues below were responsibly disclosed to the maintainers, accepted, assigned CVEs, rated High, and fixed. The reasoning excerpts are lifted from the run log and lightly trimmed for length; every code snippet is quoted from the released source at the version tested, `v0.144.0`.
+
+## At a glance
+
+| | |
+| --- | --- |
+| **Package** | `github.com/getkin/kin-openapi` (Go) |
+| **CVEs** | CVE-2026-100352, CVE-2026-100353, CVE-2026-100354 |
+| **Criticality** | High, CVSS 7.5, for all three |
+| **Affected** | through `v0.144.0` (the version tested) |
+| **Fixed in** | `v0.148.0` (YAML `NaN`/`Inf`) and `v0.149.0` (circular recursion and nil-`items`) |
+| **Impact** | Unauthenticated, single-request denial of service (full process crash) |
+| **Discovered by** | KLUE, Shellvoide's autonomous security agent |
 
 Most denial-of-service bugs are loud. Point a fuzzer at a parser, throw a million malformed inputs at it, and sooner or later something falls over. The three in this post are the opposite kind. They are quiet. Each one hides behind a guard the library had already written, sitting on a code path that guard never reached, and the only way to see it is to read the whole validation pipeline and ask an awkward question about every check you walk past.
 
@@ -37,11 +49,11 @@ kin-openapi is not a target that falls over. It has been hardened by years of re
 
 Here is the slate KLUE walked away with:
 
-| #   | Denial-of-service finding                          | The guard that existed, and where it was missing                               | Severity          |
-| --- | -------------------------------------------------- | ------------------------------------------------------------------------------ | ----------------- |
-| 1   | Uncontrolled recursion on circular `allOf` schemas | Spec-time `validate()` detects cycles; the runtime validators do not           | High (7.5)        |
-| 2   | nil-`items` panic in `openapi3filter`              | A prior fix guarded three decoder paths; three more reach the same sink        | High (7.5) |
-| 3   | YAML `NaN`/`Inf` panic on OAS 3.1                  | The built-in visitor rejects `NaN`/`Inf`; the 3.1 dispatch hands it straight through | High (7.5) |
+| #   | CVE             | Denial-of-service finding                          | The guard that existed, and where it was missing                               | Severity   |
+| --- | --------------- | -------------------------------------------------- | ------------------------------------------------------------------------------ | ---------- |
+| 1   | CVE-2026-100354 | Uncontrolled recursion on circular `allOf` schemas | Spec-time `validate()` detects cycles; the runtime validators do not           | High (7.5) |
+| 2   | CVE-2026-100353 | nil-`items` panic in `openapi3filter`              | A prior fix guarded three decoder paths; three more reach the same sink        | High (7.5) |
+| 3   | CVE-2026-100352 | YAML `NaN`/`Inf` panic on OAS 3.1                  | The built-in visitor rejects `NaN`/`Inf`; the 3.1 dispatch hands it straight through | High (7.5) |
 
 All three are reachable by an unauthenticated client with a single crafted request, and all three were reproduced end to end against `v0.144.0`, the latest release at the time of testing.
 
@@ -174,7 +186,7 @@ func (schema *Schema) visitJSON(settings *schemaValidationSettings, value any) (
 
 Applied at both sites, the same `GET /test?data=x` returns a clean `400` instead of killing the process. The guard was never novel. It already existed twenty lines away, in `validate()`.
 
-**Classification.** CWE-674 (Uncontrolled Recursion). `CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H` = 7.5 (High), and the `A:H` holds on every host because the crash is a fatal runtime error, not an ordinary panic, so nothing can catch or contain it.
+**Classification.** CWE-674 (Uncontrolled Recursion). Assigned **CVE-2026-100354**, rated High, `CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H` = 7.5, and the `A:H` holds on every host because the crash is a fatal runtime error, not an ordinary panic, so nothing can catch or contain it. Fixed in kin-openapi `v0.149.0`.
 
 ## Finding 2: the fix that patched three paths and missed three more
 
@@ -251,7 +263,7 @@ func (d *urlValuesDecoder) parseArray(raw []string, schemaRef *openapi3.SchemaRe
 
 With that single check in place, all three requests return a clean validation error instead of a panic. Guarding the sink, not the symptom, is the difference between fixing this class and playing whack-a-mole with it, which is exactly what the first fix ended up doing.
 
-**Classification.** CWE-476 (NULL Pointer Dereference), an incomplete fix of [GHSA-p6wj-qrr4-pgh5](https://github.com/advisories/GHSA-p6wj-qrr4-pgh5). `CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H` = 7.5 (High), the rating the maintainers accepted: the unrecovered panic crashes the whole process, triggered by a single unauthenticated request. Affected from v0.136.0 through v0.144.0.
+**Classification.** CWE-476 (NULL Pointer Dereference), an incomplete fix of [GHSA-p6wj-qrr4-pgh5](https://github.com/advisories/GHSA-p6wj-qrr4-pgh5). Assigned **CVE-2026-100353**, rated High, `CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H` = 7.5, the rating the maintainers accepted: the unrecovered panic crashes the whole process, triggered by a single unauthenticated request. Affected from v0.136.0 through v0.144.0, fixed in `v0.149.0`.
 
 ## Finding 3: a NaN check that guards the wrong validator
 
@@ -327,7 +339,7 @@ That last experiment is the tidy proof. Upstream `jsonschema/v6` v6.0.3 already 
 
 The complete fix is three layers, in priority order: bump the transitive dependency to `v6.0.3`; add the same `NaN`/`Inf` guard to `useJSONSchema2020` that already lives in `visitJSON`, so a future dependency regression cannot re-open the hole; and reject these tokens at the YAML decoder, since they are not valid JSON and have no business reaching schema validation on either path.
 
-**Classification.** CWE-754 (Improper Check for Unusual or Exceptional Conditions). `CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H` = 7.5 (High), the rating the maintainers accepted: the unrecovered panic crashes the whole process on a single unauthenticated request. Reachable on any OAS 3.1 endpoint that accepts a YAML body carrying a numeric constraint.
+**Classification.** CWE-754 (Improper Check for Unusual or Exceptional Conditions). Assigned **CVE-2026-100352**, rated High, `CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H` = 7.5, the rating the maintainers accepted: the unrecovered panic crashes the whole process on a single unauthenticated request. Reachable on any OAS 3.1 endpoint that accepts a YAML body carrying a numeric constraint. Fixed in `v0.148.0`.
 
 ## The discipline to rate them honestly
 
@@ -361,7 +373,14 @@ This is why KLUE's opening move against kin-openapi, _is this value reachable by
 
 ## Disclosure
 
-All three findings were reported to the kin-openapi maintainers with full proof-of-concept code, the exact unguarded call sites, and a severity analysis for each. Each was reviewed and accepted as a High-severity vulnerability: the circular-recursion crash, the incomplete-fix nil-`items` panic, and the OAS 3.1 `NaN`/`Inf` panic. Our thanks to the maintainers for a fast, straightforward triage, and for a codebase whose existing guards made the fixes obvious once the gaps were named.
+All three findings were reported to the kin-openapi maintainers with full proof-of-concept code, the exact unguarded call sites, and a severity analysis for each. Each was reviewed and accepted as a High-severity vulnerability: the circular-recursion crash, the incomplete-fix nil-`items` panic, and the OAS 3.1 `NaN`/`Inf` panic. All three were assigned CVEs, rated High at CVSS 7.5, and fixed: the `NaN`/`Inf` panic in `v0.148.0`, and the circular recursion and nil-`items` panics in `v0.149.0`. Our thanks to the maintainers for a fast, straightforward triage, and for a codebase whose existing guards made the fixes obvious once the gaps were named.
+
+## References
+
+- CVE-2026-100354, circular recursion: [GHSA-g8cf-rcjf-c8cf](https://github.com/getkin/kin-openapi/security/advisories/GHSA-g8cf-rcjf-c8cf)
+- CVE-2026-100353, nil-`items` panic: [GHSA-vrcc-3ch7-hppw](https://github.com/getkin/kin-openapi/security/advisories/GHSA-vrcc-3ch7-hppw)
+- CVE-2026-100352, YAML `NaN`/`Inf` panic: [GHSA-rj39-cv6w-8wv7](https://github.com/getkin/kin-openapi/security/advisories/GHSA-rj39-cv6w-8wv7)
+- The kin-openapi project: [github.com/getkin/kin-openapi](https://github.com/getkin/kin-openapi)
 
 ---
 
