@@ -30,7 +30,20 @@ The short version is this. When you call axios without naming a method, it is su
 
 axios cannot cause this by itself. It needs a separate prototype pollution bug somewhere else in your app first. That is why we call it a gadget: code that is harmless on its own but hands real power to a bug that would otherwise be minor. Prototype pollution turns up often in JavaScript projects, and when it does, this is what takes it from "an attacker can set a property" to "an attacker can change what your HTTP calls actually do."
 
-## Not every call is affected
+## At a glance
+
+| | |
+| --- | --- |
+| **Component** | axios, in the request path of the default instance (`lib/core/Axios.js`) |
+| **Vulnerability** | Prototype pollution gadget: an inherited property can override the HTTP method |
+| **Affected versions** | `>= 0.27.2` and `>= 1.0.0` |
+| **Fixed in** | `0.34.0` and `1.20.0` |
+| **Precondition** | A separate prototype pollution flaw already present in the application |
+| **Affected calls** | `axios.request({ url })` and `axios({ url })` with no explicit method |
+| **Not affected** | Named methods (`axios.get` and friends), an explicit `method`, or an `axios.create()` instance |
+| **Discovered by** | KLUE, Shellvoide's autonomous security agent |
+
+## Which calls are affected
 
 The strange part, and the reason this is easy to miss, is that it only bites some ways of calling axios. Write the request one way and an attacker can flip the method. Write it another way, two lines over, and nothing happens.
 
@@ -138,7 +151,7 @@ Same tell. `this.defaults.allowAbsoluteUrls` is read off that same plain object,
   ]}
 />
 
-## Proving it
+## Proof of concept
 
 The proof is short, which is part of the point. Pollute the prototype the way an upstream bug would, then make an ordinary default call with no method, and watch it leave as a delete:
 
@@ -155,11 +168,23 @@ try {
 
 Run the same thing with `axios.get('http://127.0.0.1:<port>/resource')` and the server logs a `GET`, unchanged, because the named method set the method before the tainted default was ever consulted. Put the two side by side and the whole bug fits on one screen: the shorthand call flips to `DELETE` under pollution, and the named call does not budge.
 
-How bad this is depends entirely on the endpoint at the other end. A call the developer wrote and reasoned about as a safe read can be redirected to a method that changes state, and land on a route that behaves very differently for a `DELETE` or a `POST` than for a `GET`. axios does not create the pollution and it does not choose the endpoint. What it takes away is the one thing a developer should be able to count on when they write a read: that it goes out as a read.
+## Impact
 
-## The fix
+How bad this is depends entirely on the endpoint at the other end. A call the developer wrote and reasoned about as a safe read can be redirected to a method that changes state, and land on a route that behaves very differently for a `DELETE` or a `POST` than for a `GET`. Think of a request that was only ever meant to fetch a record arriving as a delete, or a read of a resource turning into a write against it. axios does not create the pollution and it does not choose the endpoint. What it takes away is the one thing a developer should be able to count on when they write a read: that it goes out as a read.
 
-The fix is to stop treating an inherited property as if it were a configured default. The default should come from a value the instance actually has, not one that only shows up because the prototype chain was polluted. In practice that means checking that `this.defaults` owns the property before trusting it:
+The `allowAbsoluteUrls` twin lands in a similar place. It governs whether axios will honor an absolute URL, which is exactly the kind of control an app leans on when it builds request URLs from a fixed base and a caller-supplied path. Flip it through the same inherited read and you weaken a check that was meant to keep requests pointed where the developer intended.
+
+## Mitigation
+
+The real fix is upstream, and it is already out. Upgrade to **axios 1.20.0** (or **0.34.0** on the 0.x line), which changes the method lookup so an inherited property is ignored. If you cannot upgrade right away, any one of these avoids the gadget:
+
+- Use the named methods (`axios.get`, `axios.post`, and so on), which always set the method explicitly.
+- Pass the method yourself: `axios.request({ url, method: 'GET' })`.
+- Use an instance from `axios.create()` rather than the default object.
+
+And because this is only ever reachable through a separate prototype pollution bug, the most important thing is to make sure your app does not have one: audit any code that merges untrusted objects, and keep your other dependencies patched.
+
+Under the hood, the upstream change is small. The default should come from a value the instance actually has, not one that only shows up because the prototype chain was polluted, so the lookup checks that `this.defaults` owns the property before trusting it:
 
 ```js
 // take the default from OWN properties only, never an inherited one
@@ -171,7 +196,7 @@ const ownDefault =
 config.method = (config.method || ownDefault || 'get').toLowerCase();
 ```
 
-With that check in place, a polluted `Object.prototype.method` is invisible to the lookup. An app with no pollution behaves exactly as before, and a polluted one falls through to `'get'` the way it always should have. The same guard fixes `allowAbsoluteUrls`. The maintainers shipped a fix along these lines in axios 0.34.0 and 1.20.0.
+With that check in place, a polluted `Object.prototype.method` is invisible to the lookup. An app with no pollution behaves exactly as before, and a polluted one falls through to `'get'` the way it always should have. The same guard fixes `allowAbsoluteUrls`.
 
 ## Why the usual tools miss this
 
@@ -184,6 +209,13 @@ Even a person reading this code has to fight the fact that the line is correct f
 ## Disclosure
 
 KLUE discovered the bug during an autonomous run against axios. We reported it to the maintainers with a working proof of concept showing the method flip on the default instance, the named methods and isolated instances staying safe for contrast, and the matching `allowAbsoluteUrls` read. It was reviewed and accepted, and a fix that limits the default lookup to own properties shipped in axios 0.34.0 and 1.20.0. Thanks to the maintainers for a quick, straightforward triage.
+
+## References
+
+- axios source, the file this lives in: [`lib/core/Axios.js`](https://github.com/axios/axios/blob/v1.11.0/lib/core/Axios.js)
+- The axios project: [github.com/axios/axios](https://github.com/axios/axios)
+- Background on the bug class: [Prototype pollution (MDN)](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object/proto)
+- The check the fix relies on: [`Object.hasOwn()` (MDN)](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object/hasOwn)
 
 ---
 
