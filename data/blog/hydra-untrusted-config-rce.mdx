@@ -1,5 +1,5 @@
 ---
-title: 'One Config File, Full Code Execution: Two RCE CVEs in Hydra'
+title: 'One Config File, Full Code Execution: Two CVEs in Hydra'
 summary: 'Hydra is the configuration framework a large part of the Python machine-learning world uses to wire up experiments and apps. We pointed KLUE, our AI security agent, at it, and it found two ways to run code on a machine that loads an untrusted Hydra config. Both get around the blocklist Hydra had already added to stop exactly this. One slips through gaps in that blocklist; the other goes through the logging system, a door the blocklist never guarded. Both were reported, accepted, assigned CVEs (CVE-2026-106441 and CVE-2026-106442), rated High, and fixed.'
 date: '2026-10-07'
 lastmod: '2026-10-07'
@@ -9,7 +9,7 @@ tags:
     'klue',
     'case-study',
     'vulnerability-research',
-    'rce',
+    'code-execution',
     'code-injection',
     'deserialization',
     'pickle',
@@ -102,7 +102,7 @@ cfg = OmegaConf.create({
 instantiate(cfg)   # proof.txt is now on disk
 ```
 
-The nastier variant uses pickle. Neither `pickle.loads` nor `base64.b64decode` is blocked, and Hydra can nest one target inside another, so an attacker can base64-decode a pickle blob and deserialize it in one config. A pickle payload runs code while it is being unpickled, so this is a full RCE hidden inside what looks like an opaque string:
+The nastier variant uses pickle. Neither `pickle.loads` nor `base64.b64decode` is blocked, and Hydra can nest one target inside another, so an attacker can base64-decode a pickle blob and deserialize it in one config. A pickle payload runs code while it is being unpickled, so this is full code execution hidden inside what looks like an opaque string:
 
 ```yaml
 _target_: pickle.loads
