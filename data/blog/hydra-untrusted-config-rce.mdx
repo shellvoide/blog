@@ -48,9 +48,11 @@ The short version: if your application loads a Hydra config you do not fully tru
 | 1   | CVE-2026-106442 | `instantiate()` blocklist bypass                   | Slips through gaps in the `_target_` blocklist               | High (7.8) |
 | 2   | CVE-2026-106441 | Code execution through the logging config          | Runs through `dictConfig`, a path the blocklist never covers | High (7.8) |
 
-## How KLUE found it
+## How it was found
 
-KLUE does not scan or throw payloads at a running app. It reads code and reasons about it. When it looked at Hydra, it started from the security control the maintainers had already built, because the most useful question to ask about a blocklist is not "is it there" but "what does it miss." A blocklist is a promise that a specific list of bad things is blocked. The interesting work is finding the bad thing that is not on the list, or the road that goes around the list entirely. KLUE found one of each.
+It started the way every one of our runs does. We pointed KLUE, our security agent, at Hydra and let it read. KLUE does not scan or fire payloads at a running app; it reads the code and reasons about it the way a careful reviewer would. Here it did the sensible thing and began from the defense the maintainers had already built, because the useful question about a blocklist is never "is it there," it is "what does it miss." A blocklist is a promise that one specific set of bad things is blocked, so the real work is finding the bad thing that is not on the list, or the road that goes around the list entirely. KLUE came back with one of each.
+
+That is where our team comes in, and it is the part we care about most. We do not take KLUE's word for anything. Every bug it surfaces goes to a person on our side who has to reproduce it from scratch, on a real install, before it counts as a finding at all. For these two that meant standing up hydra-core on a clean machine, writing the actual malicious configs, loading them through Hydra's own API, and watching the proof land: a file written to disk, a command actually run. Only once both held up end to end did we write them up and send them to the maintainers. Everything below is a bug that survived that check.
 
 ## Finding 1: the blocklist has gaps, because every blocklist does
 
