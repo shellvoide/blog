@@ -1,5 +1,5 @@
 ---
-title: 'Two Code-Execution CVEs in Hydra (CVE-2026-106441, 106442)'
+title: 'Two Code-Execution CVEs in Hydra: CVE-2026-106441 and CVE-2026-106442'
 summary: 'Hydra is the configuration framework a large part of the Python machine-learning world uses to wire up experiments and apps. We pointed KLUE, our AI security agent, at it, and it found two ways to run code on a machine that loads an untrusted Hydra config. Both get around the blocklist Hydra had already added to stop exactly this. One slips through gaps in that blocklist; the other goes through the logging system, a door the blocklist never guarded. Both were reported, accepted, assigned CVEs (CVE-2026-106441 and CVE-2026-106442), rated High, and fixed.'
 date: '2026-10-07'
 lastmod: '2026-10-07'
