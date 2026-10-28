@@ -1,15 +1,15 @@
-import headerNavLinks from '@/data/headerNavLinks'
 import Image from 'next/image'
 import LogoPng from '@/data/logo.png'
 import Link from './Link'
+import NavLinks from './NavLinks'
 import MobileNav from './MobileNav'
 import SearchButton from './SearchButton'
 
 const Header = () => {
   return (
-    <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-md">
-      <div className="mx-auto flex max-w-3xl items-center justify-between px-4 py-3 sm:px-6 xl:max-w-5xl xl:px-0">
-        <Link href="/" aria-label="Shellvoide" className="group flex items-center gap-2.5">
+    <header className="sticky top-0 z-50 px-4 pt-4">
+      <div className="mx-auto flex max-w-3xl items-center justify-between gap-4 rounded-full border border-gray-200/70 bg-white/80 px-4 py-2.5 shadow-sm backdrop-blur-md sm:px-5 xl:max-w-5xl">
+        <Link href="/blog" aria-label="Shellvoide" className="group flex shrink-0 items-center gap-2.5">
           <Image
             src={LogoPng}
             alt="Shellvoide"
@@ -21,27 +21,14 @@ const Header = () => {
           <span className="text-xl font-bold tracking-tight text-gray-900">Shellvoide</span>
         </Link>
 
-        <div className="flex items-center gap-3 sm:gap-5">
-          <nav className="hidden items-center gap-6 sm:flex">
-            {headerNavLinks
-              .filter((link) => link.href !== '/')
-              .map((link) => (
-                <Link
-                  key={link.title}
-                  href={link.href}
-                  target="_self"
-                  className="hover:text-primary-600 text-sm font-medium text-gray-600 transition-colors"
-                >
-                  {link.title}
-                </Link>
-              ))}
-          </nav>
+        <div className="flex items-center gap-4 sm:gap-6">
+          <NavLinks />
 
           <SearchButton />
 
           <Link
             href="https://shellvoide.com/book"
-            className="bg-primary-600 hover:bg-primary-700 hidden rounded-full px-4 py-2 text-sm font-semibold text-white transition-colors sm:inline-block"
+            className="bg-primary-600 hover:bg-primary-700 hidden shrink-0 rounded-full px-4 py-2 text-sm font-semibold text-white transition-colors sm:inline-block"
           >
             Book a pentest
           </Link>

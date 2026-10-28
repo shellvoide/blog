@@ -48,7 +48,7 @@ export default function Home({ posts }) {
           <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-4">
             {featured && (
               <Link
-                href={`/${featured.slug}`}
+                href={`/blog/${featured.slug}`}
                 className="bg-primary-600 hover:bg-primary-700 inline-flex items-center gap-2 rounded-full px-6 py-3 text-sm font-semibold text-white transition-colors"
               >
                 Read the latest writeup
@@ -60,7 +60,6 @@ export default function Home({ posts }) {
               className="hover:text-primary-600 inline-flex items-center gap-1.5 text-sm font-semibold text-gray-700 transition-colors"
             >
               Explore Shellvoide
-              <span aria-hidden>↗</span>
             </Link>
           </div>
         </div>
@@ -70,7 +69,7 @@ export default function Home({ posts }) {
       {featured && (
         <section>
           <Link
-            href={`/${featured.slug}`}
+            href={`/blog/${featured.slug}`}
             className="group block rounded-3xl bg-gray-50 p-7 transition-colors duration-200 hover:bg-gray-100 sm:p-9"
           >
             <div className="flex items-center gap-3 text-xs font-semibold tracking-wide uppercase">
@@ -109,7 +108,7 @@ export default function Home({ posts }) {
             {rest.map((post) => (
               <Link
                 key={post.slug}
-                href={`/${post.slug}`}
+                href={`/blog/${post.slug}`}
                 className="group flex flex-col rounded-2xl bg-gray-50 p-6 transition-colors duration-200 hover:bg-gray-100"
               >
                 <time
