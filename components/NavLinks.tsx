@@ -10,8 +10,7 @@ const NavLinks = () => {
     <nav className="hidden items-center gap-6 sm:flex">
       {headerNavLinks.map((link) => {
         const external = link.href.startsWith('http')
-        const active =
-          !external && (pathname === link.href || pathname.startsWith(`${link.href}/`))
+        const active = !external && (pathname === link.href || pathname.startsWith(`${link.href}/`))
         return (
           <Link
             key={link.title}

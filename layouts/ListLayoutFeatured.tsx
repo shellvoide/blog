@@ -27,7 +27,9 @@ export default function ListLayoutFeatured({ posts, title }: ListLayoutProps) {
   return (
     <div className="pb-16">
       <div className="flex items-end justify-between gap-4 pt-6 pb-8">
-        <h1 className="text-3xl font-extrabold tracking-tight text-gray-900 sm:text-4xl">{title}</h1>
+        <h1 className="text-3xl font-extrabold tracking-tight text-gray-900 sm:text-4xl">
+          {title}
+        </h1>
         <span className="shrink-0 pb-1 text-sm text-gray-500">{posts.length} posts</span>
       </div>
 

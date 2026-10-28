@@ -58,20 +58,17 @@ const advisories: Advisory[] = [
       {
         id: 'CVE-2026-100352',
         desc: 'YAML NaN/Inf values bypass the built-in guards and panic via the OAS 3.1 validation path.',
-        advisory:
-          'https://github.com/getkin/kin-openapi/security/advisories/GHSA-rj39-cv6w-8wv7',
+        advisory: 'https://github.com/getkin/kin-openapi/security/advisories/GHSA-rj39-cv6w-8wv7',
       },
       {
         id: 'CVE-2026-100353',
         desc: 'Incomplete fix for GHSA-p6wj-qrr4-pgh5: three unpatched nil-Items panic paths in openapi3filter.',
-        advisory:
-          'https://github.com/getkin/kin-openapi/security/advisories/GHSA-vrcc-3ch7-hppw',
+        advisory: 'https://github.com/getkin/kin-openapi/security/advisories/GHSA-vrcc-3ch7-hppw',
       },
       {
         id: 'CVE-2026-100354',
         desc: 'Uncontrolled recursion on circular allOf/anyOf/oneOf schemas causes a fatal process crash.',
-        advisory:
-          'https://github.com/getkin/kin-openapi/security/advisories/GHSA-g8cf-rcjf-c8cf',
+        advisory: 'https://github.com/getkin/kin-openapi/security/advisories/GHSA-g8cf-rcjf-c8cf',
       },
     ],
   },
@@ -131,8 +128,8 @@ export default function ResearchAdvisoriesPage() {
           Research &amp; Advisories
         </h1>
         <p className="mt-4 max-w-2xl leading-7 text-gray-600">
-          Coordinated vulnerability disclosures from the Shellvoide / KLUE team. Each entry below has
-          an assigned CVE.
+          Coordinated vulnerability disclosures from the Shellvoide / KLUE team. Each entry below
+          has an assigned CVE.
         </p>
         <p className="mt-3 text-sm font-medium text-gray-500">
           {totalCves} CVEs · {advisories.length} packages
