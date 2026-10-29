@@ -1,6 +1,6 @@
 ---
-title: 'Seven Validated Vulnerabilities in Poweradmin, the PowerDNS Web Interface'
-summary: 'Poweradmin is the web console many teams use to run PowerDNS. We pointed KLUE, our autonomous security agent, at it and came back with seven separate findings, from a tenant who can run code on the DNS server through a LUA record to a login that hands out Administrator because the SSO path trusts an email it never verified. The maintainers reviewed, validated, and fixed all seven. Four carry assigned CVEs, all rated High (CVE-2026-115458, CVE-2026-115459, CVE-2026-115460, CVE-2026-115461), and the other three, including the Critical remote code execution, are fixed with CVEs still pending. This post walks through each one, what it lets an attacker do, and the thread that connects most of them: defaults and checks that fail open toward the most privileged outcome whenever something upstream is missing or attacker-controlled.'
+title: 'Seven Vulnerabilities in Poweradmin, the PowerDNS Web Interface'
+summary: 'Poweradmin is the PHP web panel a large share of PowerDNS operators use to manage zones, and it is often run multi-tenant. We pointed KLUE, our security agent, at it and found seven separate ways its security controls fail. One lets a tenant with a normal Zone Manager role run code as root on the DNS server through a LUA record. Four more hand out full Administrator through SSO or the user-creation path. The last two let a restricted editor rewrite a zone apex and let an attacker toggle DNSSEC over a forged GET. Four were assigned CVEs, all rated High (CVE-2026-115458, CVE-2026-115459, CVE-2026-115460, CVE-2026-115461), and three, including the Critical code execution, are fixed with CVEs still pending. The fixes shipped across the 3.9.12, 4.2.6, 4.3.5, and 4.4.1 releases, each finding in the releases on the branches it affects.'
 date: '2026-10-29'
 authors: ['appsec-research']
 category: 'research-advisories'
@@ -28,159 +28,407 @@ layout: PostSimple
 canonicalUrl: 'https://shellvoide.com/blog/poweradmin-seven-security-findings'
 ---
 
+Poweradmin is the web interface a large share of PowerDNS operators run in front of their nameservers. It is a PHP application, and it does the ordinary work of a DNS control panel: add and edit records, sign zones, rotate DNSSEC keys, and hand each customer a slice of the server to manage. The last part is the one that matters for security. Poweradmin is built to be multi-tenant, with a permission model whose entire job is to keep a customer inside their own zones, out of everyone else's, and well away from the DNS server itself. Permission templates like Guest, Viewer, Editor, and Zone Manager are how an operator draws those lines.
+
+We pointed KLUE, our security agent, at Poweradmin to see whether those lines actually held. They did not, in seven different places. The worst gives a tenant with the shipped Zone Manager role code execution as root on the DNS server, through a PowerDNS LUA record. Four more end in a full `user_is_ueberuser` account: two through single sign-on, two through the ordinary user-creation path. The last two are narrower but still serious: a restricted editor rewriting a zone's SOA and NS records, and an attacker toggling a zone's DNSSEC key through a GET that a logged-in operator's browser can be made to send.
+
+The short version: six of the seven are checks that fail open, and most of them fail open toward Administrator. The seventh, the LUA record, is the one that makes the rest serious, because it turns a tenant account into control of the DNS server every other tenant depends on. The maintainers confirmed all seven and shipped fixes across the maintained branches. Four were assigned CVEs, all rated High. The other three, including the Critical code execution, are fixed with CVEs still pending.
+
 ## At a glance
 
 | | |
 | --- | --- |
-| **Software** | Poweradmin, the web interface for PowerDNS (PHP, `poweradmin/poweradmin`) |
-| **Findings** | 7, all reviewed, validated, and fixed by the maintainers |
-| **CVEs** | 4 assigned, all High: CVE-2026-115458, CVE-2026-115459, CVE-2026-115460, CVE-2026-115461. 3 pending. |
-| **Severity** | Critical (CVSS 9.9) for the LUA-record code execution, High for the other six |
-| **Affected** | 3.x and 4.x branches through 4.4.0 (the exact range varies by finding) |
-| **Fixed in** | 3.9.12, 4.2.6, 4.3.5, and 4.4.1 |
+| **Package** | [`poweradmin/poweradmin`](https://github.com/poweradmin/poweradmin) (Composer), the web interface for PowerDNS |
+| **CVEs** | [CVE-2026-115459](https://github.com/poweradmin/poweradmin/security/advisories/GHSA-h2h8-xprp-w5cc), [CVE-2026-115461](https://github.com/poweradmin/poweradmin/security/advisories/GHSA-vw9h-w6h7-9wwm), [CVE-2026-115460](https://github.com/poweradmin/poweradmin/security/advisories/GHSA-jq2m-gjfr-82cg), [CVE-2026-115458](https://github.com/poweradmin/poweradmin/security/advisories/GHSA-q7r4-26g9-q7cv). Three more pending. |
+| **Criticality** | Critical (CVSS 9.9) for the LUA-record code execution, High for the other six |
+| **Affected** | 3.x and 4.x through 4.4.0 (the exact range varies by finding) |
+| **Fixed in** | `3.9.12`, `4.2.6`, `4.3.5`, `4.4.1` |
+| **Impact** | Tenant code execution on the DNS server, Administrator takeover, and zone-apex tampering |
 | **Discovered by** | KLUE, Shellvoide's autonomous security agent |
 
-Poweradmin is not a flashy target. It is the quiet web panel sitting in front of a PowerDNS install, the thing an operations team logs into to add a record, rotate a DNSSEC key, or hand a customer a slice of a zone. That last part is the interesting part. Poweradmin is often run multi-tenant, with permission templates that are supposed to keep one customer inside their own zones and well away from everyone else's, and away from the server itself.
+| #   | CVE             | Finding                                                   | The boundary it got around                                                  | Severity      |
+| --- | --------------- | --------------------------------------------------------- | --------------------------------------------------------------------------- | ------------- |
+| 1   | Pending         | LUA record code execution via zone metadata               | `api_write` and the LUA blocklist are enforced on the wrong path            | Critical, 9.9 |
+| 2   | CVE-2026-115459 | OIDC/SAML account linking by unverified email (nOAuth)    | Linking trusts the `email` claim and never reads `email_verified`           | High, 8.8     |
+| 3   | CVE-2026-115461 | SSO auto-provisioning fails open to Administrator          | Unresolved default template falls back to the first row, which is admin     | High, 7.5     |
+| 4   | CVE-2026-115460 | `getMinimalPermissionTemplateId()` returns Administrator   | "Minimal" is ranked by row count, and the admin template has the fewest rows | High, 7.5     |
+| 5   | Pending         | SOA/NS restriction bypassed by swapping the record type    | The guard checks the submitted type, not the stored type being overwritten  | High, 8.1     |
+| 6   | Pending         | DNSSEC key toggle reachable over an unauthenticated GET    | The controller skips `isPost()` and `validateCsrfToken()`                    | High, 8.1     |
+| 7   | CVE-2026-115458 | Installer IP allow-list bypass via `X-Forwarded-For`       | The installer reads the client IP from a client-set header                  | High, 8.1     |
 
-We gave KLUE, our autonomous security agent, the Poweradmin codebase and asked a single question of every trust boundary it found: what happens when the thing this check depends on is missing, or is set by the person it is meant to stop? Seven times the answer was the same. The check did not refuse. It fell through to the more permissive outcome. A missing default template resolved to Administrator. An unverified email was treated as proof of identity. A record-type restriction read the type from a value the request could change. An IP allow-list read the address from a header the client sends.
+## How it was found
 
-None of these is an exotic bug. Each is a decision that should fail closed and instead fails open, and most of them fail open in the direction of more access, not less. Taken one at a time they are ordinary. Taken together they describe a control panel where several of the walls are hinged to swing the wrong way. The maintainers agreed: all seven were reviewed, validated, and fixed across the maintained branches. Four were assigned CVEs, all rated High, and the other three, including the Critical LUA-record code execution, have CVEs requested and pending.
+It started the way every one of our runs does. We set KLUE, our security agent, reading Poweradmin, and it worked through the code the way a careful reviewer would, reasoning about what each check protects rather than scanning for patterns or firing requests at a running instance. The permission model was the natural place to spend that attention, because it is the thing standing between a tenant and everything they are not meant to reach. So KLUE walked it boundary by boundary and asked, at each one, what happens when the input is missing or attacker-shaped: when the default template cannot be resolved, when the SSO token carries an address the provider never verified, when two parts of the same request disagree about what is being edited, when a security helper is reached on a code path the guard was never wired to.
 
-Here is the full set.
+That is where our team takes over, which is the part we care about most, because we do not take KLUE's word for anything. Every bug it surfaced went to an engineer on our side who reproduced it from scratch on a self-hosted Poweradmin build before it counted as a finding at all. For these seven that meant standing up the panel against a real PowerDNS backend, logging in as low-privilege tenants, and driving each path end to end: writing the metadata row and watching `id` run as root, deleting the Guest template and watching a new SSO user land as a superuser, submitting a type-swapped record and reading the overwritten SOA back out of the database. Only the ones that held up that way were written up and sent to the maintainers, and everything below is one of those.
 
-| #   | Finding                                                    | Class                 | Severity      | CVE             | Advisory            |
-| --- | ---------------------------------------------------------- | --------------------- | ------------- | --------------- | ------------------- |
-| 1   | LUA record injection via the zone metadata editor          | Code execution        | Critical, 9.9 | Pending         | GHSA-cpw8-xprw-73x5 |
-| 2   | OIDC/SAML linking trusts an unverified email (nOAuth)      | Account takeover      | High, 8.8     | CVE-2026-115459 | GHSA-h2h8-xprp-w5cc |
-| 3   | SSO auto-provisioning fails open to Administrator          | Privilege escalation  | High, 7.5     | CVE-2026-115461 | GHSA-vw9h-w6h7-9wwm |
-| 4   | getMinimalPermissionTemplateId() resolves to Administrator | Privilege escalation  | High, 7.5     | CVE-2026-115460 | GHSA-jq2m-gjfr-82cg |
-| 5   | SOA/NS restriction bypassed by swapping the record type    | Authorization bypass  | High, 8.1     | Pending         | GHSA-3h74-qh4c-64gg |
-| 6   | State-changing actions exposed over GET with no CSRF token | CSRF                  | High, 8.1     | Pending         | GHSA-rjcc-m8cx-6p4c |
-| 7   | Installer IP allow-list trusts X-Forwarded-For             | Access-control bypass | High, 8.1     | CVE-2026-115458 | GHSA-q7r4-26g9-q7cv |
+## Finding 1: a Zone Manager can run code as root on the DNS server
 
-A note on the detail level in this post. The mechanism of each finding is described from the validated advisory and from how the relevant feature works in Poweradmin and PowerDNS. The code examples below are short, generic illustrations of the behavior, not extracts of Poweradmin internals, and each per-finding advisory carries the exact affected code and line-level fix.
+**In plain terms:** PowerDNS can hold a record whose value is a LUA script, and it runs that script to answer a query. A tenant with the shipped Zone Manager role can turn that feature on for a zone they own, then store a record whose script runs an OS command. The command runs as the PowerDNS user, which on a default install is root.
 
-## Finding 1: a tenant can run code on the DNS server through a LUA record
+Three separate weaknesses line up to make this reachable by a tenant who holds `zone_meta_edit_own` and `zone_content_edit_own` but not `user_is_ueberuser`.
 
-**In plain terms:** PowerDNS can hold records whose content is a small LUA script, and it runs that script when it answers a query. A Poweradmin user who should only be allowed to edit their own zone could smuggle such a record in through the zone metadata editor. Once PowerDNS evaluates it, that user is running code on the shared DNS server.
+First, the control that is supposed to stop a tenant setting dangerous metadata only runs on one backend. In `EditZoneMetadataController::saveMetadata()`, the `api_write` filter is applied only when the request goes through the API client. The default `dns.backend = 'sql'` takes the other branch and writes the row straight through `replaceDomainMetadata()` with no filter at all. Second, `resolveSubmittedKind()` uppercases and trims the submitted metadata kind and returns it without checking it against `MetadataDefinitions::DEFINITIONS` or testing `api_write`, and the UI dropdown offers `ENABLE-LUA-RECORDS` as a normal option. So the tenant can enable LUA evaluation on their own zone.
 
-LUA records are a real PowerDNS feature. They exist so a zone can return a different answer depending on the client, the time, or the result of a health check, and the way they do that is by evaluating LUA at answer time inside the authoritative server. That is a lot of power to expose, which is why the ability to create them is meant to be an operator decision, not a tenant one.
+Third, the content check for LUA records is a regex blocklist:
 
-The problem KLUE flagged is that the zone metadata editor did not keep a tenant-level account away from that power. A user with rights over nothing but their own zone could place content that PowerDNS later evaluates as LUA. Conceptually the payload looks like an ordinary record whose script does more than return an address:
-
-```text
-; illustration of the shape, not Poweradmin source
-foo  IN  LUA  A  "os.execute('id'); return '192.0.2.1'"
+```php
+// LUARecordValidator::validateLuaContent()
+/\b(os\.|io\.|file\.|loadfile|dofile)\b/i
 ```
 
-In a single-operator install this is already bad. In the multi-tenant deployments Poweradmin is built for, it is the worst shape a bug can take: one customer, confined by design to their own zone, reaches the process that serves every other customer's DNS, and the host it runs on. This is the most serious finding in the set, and the reason the rest of the panel's permission model matters so much.
+A regex cannot contain a Turing-complete language. Any of table indexing, `require`, or string concatenation walks around it, so `os.execute` is rejected while the same call reached indirectly is accepted.
 
-**Status.** Reported to the Poweradmin maintainers, validated, and fixed. Rated Critical, CVSS 9.9 (CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:C/C:H/I:H/A:H). A CVE has been requested and is pending. Affected on 4.3.0 through 4.3.4 and 4.4.0; fixed in 4.3.5 and 4.4.1. Advisory: GHSA-cpw8-xprw-73x5.
+<ReasoningTrace
+  label="klue · the metadata filter and the LUA blocklist are both on the wrong path"
+  lines={[
+    {
+      time: '00:41',
+      role: 'AGENT',
+      text: `saveMetadata applies the api_write read-only filter only when the API client is set. The default sql backend writes the metadata row with no filter, so a tenant can set ENABLE-LUA-RECORDS on their own zone even though the API path reports that kind as read-only.`,
+    },
+    {
+      time: '00:44',
+      role: 'AGENT',
+      text: `validateLuaContent blocks os., io., file., loadfile, dofile with a word-boundary regex. That is a deny-list over a full language. _G['os']['execute'](...) never matches it, and neither does require('os') or a concatenated name. The blocklist is not the right shape for this.`,
+    },
+    {
+      time: '00:47',
+      role: 'AGENT',
+      text: `Chaining the two: enable LUA on an owned zone through the sql path, then store a record whose content indexes os.execute through _G. PowerDNS evaluates the record at query time as the pdns user. That is a scope change out of the tenant's zone and onto the server.`,
+    },
+  ]}
+/>
 
-## Finding 2: single sign-on trusts an email address it never verified
-
-**In plain terms:** Poweradmin can log you in through an external identity provider over OIDC or SAML, and it matches you to a local account by your email address. It did not check that the identity provider had actually verified that address. So an attacker registers at some identity provider, sets their email to a victim admin's address, signs in through SSO, and lands inside the victim's account.
-
-This is the nOAuth pattern, and it is worth stating precisely because it is easy to get wrong. An OIDC or SAML assertion carries an email claim, and separately it carries a signal about whether that email was actually verified by the provider. An application that links accounts on the email claim alone, without requiring the verified signal and without binding the login to the provider's stable subject identifier, turns any identity provider that lets a user type in an arbitrary email into an account-takeover tool.
-
-The attacker does not need to break the identity provider or forge anything. They need an account at a provider the Poweradmin instance trusts, and the ability to set their profile email to the target's:
-
-```text
-# the claim the attacker presents
-email:          admin@victim.example
-email_verified: false        # never checked by Poweradmin
-sub:            attacker-12345
-```
-
-Because the match is on email, the login resolves to whatever local account owns `admin@victim.example`, up to and including Administrator. The fix is to require the verified signal and to key the link on the immutable subject identifier rather than on a mutable email.
-
-**Status.** Reported, validated, and fixed. CVE-2026-115459, rated High, CVSS 8.8 (CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H). Affected on 4.1.0 through 4.2.5, 4.3.0 through 4.3.4, and 4.4.0; fixed in 4.2.6, 4.3.5, and 4.4.1. Advisory: GHSA-h2h8-xprp-w5cc.
-
-## Finding 3: new SSO users become Administrator when the default template cannot be resolved
-
-**In plain terms:** when someone logs in through SSO for the first time, Poweradmin creates a local account for them and assigns a permission template. If it cannot work out which default template to use, it did not stop and it did not pick the lowest level. It granted Administrator.
-
-Auto-provisioning is convenient and common: the first time a valid SSO identity appears, give them an account so an operator does not have to pre-create one. The safe version of that feature resolves a configured default template, and if it cannot, it refuses the login or assigns the most restricted role. Poweradmin's path did the opposite under a resolvable failure. When the default permission template could not be resolved, the fallback was Administrator.
-
-The trigger does not require an exotic attack. A misconfiguration, a missing or renamed default template, or any condition that makes the lookup fail is enough for the next first-time SSO user to be provisioned as an administrator. Combine it with Finding 2 and the two reinforce each other: one lets an attacker arrive as a first-time SSO identity of their choosing, the other decides what that identity is worth on a bad day.
-
-**Status.** Reported, validated, and fixed. CVE-2026-115461, rated High, CVSS 7.5 (CVSS:3.1/AV:N/AC:H/PR:L/UI:N/S:U/C:H/I:H/A:H). Affected on 4.1.0 through 4.2.5, 4.3.0 through 4.3.4, and 4.4.0; fixed in 4.2.6, 4.3.5, and 4.4.1. Advisory: GHSA-vw9h-w6h7-9wwm.
-
-## Finding 4: the function that is supposed to return the least privilege returns Administrator
-
-**In plain terms:** there is a function whose entire job is to hand back the least-privileged permission template, the safe default to fall back on. Its default resolved to the Administrator template. So the code that reached for the safest option was reaching for the most dangerous one.
-
-`getMinimalPermissionTemplateId()` reads like a safety primitive. It is the thing you call when you want a floor, a known-minimal role to assign when nothing more specific applies. The danger of a primitive like that is that callers trust the name. They assume whatever it returns is safe to grant without a second thought, which is the entire point of having it. When its default points at Administrator, every one of those trusting callers becomes a quiet privilege-escalation site, and the ones that matter are exactly the fallback and provisioning paths that reach for a minimal role when something upstream is missing.
-
-This finding and Finding 3 are the same mistake seen from two angles: a least-privilege default that is not least privilege at all. That is why they are worth reading together. The fix for both is the same discipline, a default that genuinely sits at the bottom of the privilege order, and a refusal rather than a grant when even that cannot be resolved.
-
-**Status.** Reported, validated, and fixed. CVE-2026-115460, rated High, CVSS 7.5 (CVSS:3.1/AV:N/AC:H/PR:L/UI:N/S:U/C:H/I:H/A:H). Affected on 4.1.0 through 4.2.5, 4.3.0 through 4.3.4, and 4.4.0; fixed in 4.2.6, 4.3.5, and 4.4.1. Advisory: GHSA-jq2m-gjfr-82cg.
-
-## Finding 5: a restricted editor can still rewrite SOA and NS by changing the record type
-
-**In plain terms:** there is a permission meant to let a user edit the records in their own zone while keeping them away from the sensitive SOA and NS records. The check decided whether to allow the edit based on the record type the request said it was changing. Change the type inside the same request and the check waves it through, so a restricted user can write SOA and NS after all.
-
-The `zone_content_edit_own_as_client` permission is the fine-grained one: it is how an operator says "this customer can manage the A, AAAA, CNAME, TXT, and MX records in their zone, but not the SOA and the NS set." SOA and NS are special because they control the zone's serial, its refresh behavior, and, critically, its delegation. Whoever controls the NS records controls where the zone is answered from.
-
-The restriction was enforced against the record type presented to the check, and that type could be changed within the same request before the write happened. A request that shows the check an allowed type, then writes SOA or NS, slips past the guard. The result is that a user who is supposed to be boxed into ordinary record edits can alter the authority and delegation of their zone, which is a disruption and, depending on the setup, a hijack primitive within their tenancy.
-
-**Status.** Reported to the Poweradmin maintainers, validated, and fixed. Rated High, CVSS 8.1 (CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:N/I:H/A:H). A CVE has been requested and is pending. Affected on 3.0.0 through 3.9.11, 4.0.0 through 4.2.5, 4.3.0 through 4.3.4, and 4.4.0; fixed in 3.9.12, 4.2.6, 4.3.5, and 4.4.1. Advisory: GHSA-3h74-qh4c-64gg.
-
-## Finding 6: high-impact actions are exposed over GET with no CSRF token
-
-**In plain terms:** several actions that change state, toggling a DNSSEC key, deleting a template, a supermaster, or a permission template, could be triggered by a plain GET request with no anti-CSRF token. A logged-in administrator who opens an attacker's page can be made to perform those actions without clicking anything.
-
-Cross-site request forgery is old and well understood, which is exactly why it is worth being blunt about where it hurts. State-changing operations should not be reachable over GET, and they should carry a token the attacker's page cannot guess. Here they were reachable over GET and carried no token, which means they can be fired by anything the victim's browser loads: an image tag, a hidden iframe, a prefetched link on a page the administrator visits while logged in.
+Reproduced against a self-hosted build at commit `d814d61` (PHP 8.3.6, SQLite, default backend), the metadata write returns a redirect and lands the row, while the same operation on the API path is correctly refused, which is what shows the control exists and is enforced in only one place:
 
 ```text
-<!-- the victim's browser issues this simply by loading the page -->
-<img src="https://poweradmin.example/...?action=delete&id=42">
+# tenant POSTs metadata[0][kind_key]=ENABLE-LUA-RECORDS to /zones/11/metadata
+HTTP/1.1 302 Found
+# domainmetadata now contains:  1|11|ENABLE-LUA-RECORDS|1
+
+# the API path, same tenant and zone, refuses it:
+PUT /api/v2/zones/11/metadata/ENABLE-LUA-RECORDS  ->  403 "Metadata kind ENABLE-LUA-RECORDS is read-only"
 ```
 
-The actions in scope are not cosmetic. Toggling a DNSSEC key can break validation for an entire zone. Deleting permission templates, supermasters, and templates removes the structures that other accounts and zones depend on. An attacker who can get an authenticated operator to visit a page gets to drive those operations on their behalf.
-
-**Status.** Reported to the Poweradmin maintainers, validated, and fixed. Rated High, CVSS 8.1 (CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:N/I:H/A:H). A CVE has been requested and is pending. Affected on 3.0.0 through 3.9.11, 4.0.0 through 4.2.5, 4.3.0 through 4.3.4, and 4.4.0; fixed in 3.9.12, 4.2.6, 4.3.5, and 4.4.1. Advisory: GHSA-rjcc-m8cx-6p4c.
-
-## Finding 7: the installer trusts a header the client controls to decide who is allowed in
-
-**In plain terms:** the installer is supposed to be reachable only from trusted addresses. It read the client's address from the X-Forwarded-For header, which the client sends, so anyone can claim to be on the allow-list by setting that header.
-
-Installers are high-value because they can reconfigure the application: database credentials, the first administrator, core settings. The usual defense is to restrict the installer to a known address, often localhost, and to lock or remove it after setup. Poweradmin restricted access by IP, but it derived the client IP from X-Forwarded-For rather than from the real connection address.
-
-X-Forwarded-For is a request header. It exists so a reverse proxy can tell the application who the real client was, which only means anything if a trusted proxy sets it and the application refuses to believe any copy that arrives from further out. Reading it directly from an untrusted client inverts the control: the attacker simply asserts an allowed address.
+The tenant then adds a LUA record whose content passes the blocklist:
 
 ```text
-X-Forwarded-For: 127.0.0.1
+; stored record, as it lands in the records table
+rce.tenant.test  LUA  A  ";local h=_G['os'] h['execute']('id > /tmp/pdns_rce_proof') return '127.0.0.1'"
 ```
 
-If the installer is still reachable after setup, which is a common mistake on its own, this header is all it takes to walk back into it from anywhere.
+When PowerDNS answers a query for that name it evaluates the script, and the proof file shows `uid=0(root) gid=0(root)`. From there, code running as the PowerDNS user can read `pdns.conf` (the backend database credentials and the API key), read the DNSSEC signing keys, rewrite any zone the server is authoritative for including other tenants' zones, and stop the service. This is the finding that makes the permission model worth caring about, because it turns one tenant account into the whole server.
 
-**Status.** Reported, validated, and fixed. CVE-2026-115458, rated High, CVSS 8.1 (CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H). Affected on 3.0.0 through 3.9.11, 4.0.0 through 4.2.5, 4.3.0 through 4.3.4, and 4.4.0; fixed in 3.9.12, 4.2.6, 4.3.5, and 4.4.1. Advisory: GHSA-q7r4-26g9-q7cv.
+**Classification.** CWE-94 (Improper Control of Generation of Code). Rated Critical, CVSS 9.9 (`CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:C/C:H/I:H/A:H`). A CVE has been requested and is pending. Affects 4.3.0 through 4.3.4 and 4.4.0. Fixed in `4.3.5` and `4.4.1`. Advisory: [GHSA-cpw8-xprw-73x5](https://github.com/poweradmin/poweradmin/security/advisories/GHSA-cpw8-xprw-73x5). A related template-record validation gap is tracked separately as GHSA-c859-jm5r-62x6.
 
-## The thread that ties them together
+## Finding 2: single sign-on links accounts by an email nobody verified
 
-Six of these seven are the same error wearing different clothes. A security decision depends on a value, that value is missing or is something the attacker gets to set, and the code resolves the ambiguity in the attacker's favor instead of refusing.
+**In plain terms:** Poweradmin can log you in through OIDC or SAML and link the external identity to a local account by email address. It never reads the `email_verified` claim. So an attacker who can make a trusted provider assert an arbitrary email, while holding only their own ordinary identity, can log in as the local account that owns that address, up to and including a superuser.
 
-Walk the list with that lens. The SSO login trusts an email the provider never verified. The provisioning path, when it cannot resolve a default template, grants Administrator. The "minimal" template primitive defaults to Administrator. The SOA/NS restriction trusts a record type the request can change under it. The CSRF-exposed actions trust that any request carrying the session cookie was meant by the user. The installer trusts an address the client puts in a header. In every case the safe answer was available, refuse, pick the floor, require the token, read the real connection address, and in every case the code took the permissive branch.
+This is the nOAuth pattern, and in Poweradmin it comes from three properties lining up. The `email_verified` claim is never read anywhere in `lib/`. Linking is on by default, because the code reads the flag as `($authConfig['link_by_email'] ?? true)`, so a provider entry that omits the key still gets it. And the lookup that finds the account to link to, `findUserByEmail()`, filters only on `active = 1`: it does not exclude local password accounts, permission templates, or accounts holding `user_is_ueberuser`.
 
-The seventh, the LUA record, is the reason the other six are not academic. A permission model is only as valuable as the blast radius it contains, and in a multi-tenant Poweradmin install the thing it is containing is code execution on the shared DNS server. Each fail-open default is a crack in the wall between a tenant and that outcome.
+The flow runs through `UserProvisioningService::provisionUser()`. On a first login there is no existing subject link, so the email branch runs, `findUserByEmail()` returns the matching account, and `linkOidcToExistingUser()` persists a row in `oidc_user_links` binding the attacker's subject to that account. `updateExistingUser()` then overwrites the account's fullname and email from the assertion and returns the existing user ID, which becomes the session user.
 
-This is also the kind of work that suits an autonomous reviewer. None of these findings came from a payload fired at a fuzzer. They came from reading each trust boundary and asking what it does on its worst day: when the default is absent, when the claim is unverified, when the type changes mid-request, when the header is a lie. KLUE held the permission model in view long enough to ask that question seven times and to notice that the answers all pointed the same way. A person on our side confirmed each one and worked the disclosure with the maintainers.
+<ReasoningTrace
+  label="klue · the link is on email, and email is attacker-controlled"
+  lines={[
+    {
+      time: '01:58',
+      role: 'AGENT',
+      text: `OidcUserInfo::isValid() requires only a non-empty username and subject. email_verified is never read in lib/. provisionUser falls back to findUserByEmail when there is no subject link, and link_by_email defaults to true via (?? true).`,
+    },
+    {
+      time: '02:01',
+      role: 'AGENT',
+      text: `findUserByEmail filters only active = 1. It does not exclude auth_method = sql local accounts or user_is_ueberuser. So an asserted email of admin@tenant.test resolves to the local administrator and the attacker subject is linked to user 1.`,
+    },
+    {
+      time: '02:03',
+      role: 'AGENT',
+      text: `The link persists in oidc_user_links, and later logins match findUserByOidcSubject before the email branch runs. The takeover survives the victim correcting the email at the IdP and survives setting link_by_email to false.`,
+    },
+  ]}
+/>
+
+The engineer confirmed it by calling the real `provisionUser()` through the PHP CLI with a constructed `OidcUserInfo`, against a SQLite build at commit `d814d61`:
+
+```text
+# seeded local admin:  id 1, auth_method sql, perm_templ 1, active, email admin@tenant.test
+# attacker assertion:  subject "attacker-controlled-subject-456", email "admin@tenant.test"
+
+OidcUserInfo::isValid()        -> true
+UserProvisioningService::provisionUser() -> 1        # the administrator's user id
+oidc_user_links                -> new row: attacker-controlled-subject-456 -> user 1
+# no "attacker" account is ever created
+```
+
+The realistic preconditions are ordinary identity-provider features: a provider that lets a user edit their own email or UPN without re-verification (common in Keycloak and Active Directory), a multi-tenant provider such as Entra ID at `/common/`, or self-registration without email verification. A secondary effect makes it quiet: `updateExistingUser()` overwrites the victim's fullname and email, and those fields become read-only in the UI for IdP-managed accounts, so the hijack is harder to notice or reverse.
+
+**Classification.** CWE-290 (Authentication Bypass by Spoofing). Assigned **CVE-2026-115459**, rated High, CVSS 8.8 (`CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H`). Affects 4.1.0 through 4.2.5, 4.3.0 through 4.3.4, and 4.4.0. Fixed in `4.2.6`, `4.3.5`, and `4.4.1`. Advisory: [GHSA-h2h8-xprp-w5cc](https://github.com/poweradmin/poweradmin/security/advisories/GHSA-h2h8-xprp-w5cc).
+
+## Finding 3: when the default template cannot be resolved, the default is Administrator
+
+**In plain terms:** when Poweradmin auto-provisions a user from OIDC or SAML, it picks the new account's permission template. If the configured default template name cannot be matched, it does not stop and it does not pick the lowest role. It falls back to the first row in the table, which on every shipped install is the Administrator template.
+
+The choice happens in `UserProvisioningService::determinePermissionTemplate()`. It calls `findPermissionTemplateByName()` with the configured default. On a miss it logs an error, logs the warning "Default permission template not found, using first available template", and calls `findFirstAvailablePermissionTemplate()`:
+
+```sql
+SELECT id FROM perm_templ ORDER BY id ASC LIMIT 1
+```
+
+The bundled schema seeds `perm_templ` id 1 as `Administrator`, which holds `perm_id 53 = user_is_ueberuser`. `findPermissionTemplateByName()` does a case-sensitive exact match (`WHERE name = ?`), and nothing validates the configured name at boot or at login, so the miss is easy to cause: rename or delete the Guest template, or set `default_permission_template` to `'guest'` instead of `'Guest'`. `createNewUser()` calls this with `$useDefaultFallback = true` by default and writes the returned id straight into the new user's `perm_templ` with `active = 1`.
+
+<ReasoningTrace
+  label="klue · the fallback is ORDER BY id ASC, and id 1 is Administrator"
+  lines={[
+    {
+      time: '02:22',
+      role: 'AGENT',
+      text: `determinePermissionTemplate resolves the configured default by exact, case-sensitive name. On a miss it does not refuse; it calls findFirstAvailablePermissionTemplate, which is SELECT id FROM perm_templ ORDER BY id ASC LIMIT 1.`,
+    },
+    {
+      time: '02:24',
+      role: 'AGENT',
+      text: `The seeded schema has Administrator at id 1 with user_is_ueberuser. So any condition that makes the name lookup miss, a renamed or deleted Guest template, or a 'guest' vs 'Guest' typo, provisions the next first-time SSO user as a superuser. No validation catches the bad config name.`,
+    },
+  ]}
+/>
+
+Reproduced on a SQLite build at commit `d814d61`, with the default template present and then removed:
+
+```text
+# Guest present
+UserProvisioningService::provisionUser() -> perm_templ=5 (Guest)         IS_UEBERUSER=no
+
+# after: DELETE FROM perm_templ WHERE id=5;
+UserProvisioningService::provisionUser() -> perm_templ=1 (Administrator) IS_UEBERUSER=YES
+```
+
+The precondition is remotely reachable on its own: a companion CSRF issue lets an authenticated operator's browser delete the Guest template with a single top-level navigation (Finding 6 is the same class), and a fresh SSO deployment before its first external login is exactly the state where no user is assigned to Guest. Once the precondition exists, any first login through the configured provider creates a full administrator with control of every zone, user, template, API key, and DNSSEC operation.
+
+**Classification.** CWE-269 (Improper Privilege Management). Assigned **CVE-2026-115461**, rated High, CVSS 7.5 (`CVSS:3.1/AV:N/AC:H/PR:L/UI:N/S:U/C:H/I:H/A:H`). Affects 4.1.0 through 4.2.5, 4.3.0 through 4.3.4, and 4.4.0. Fixed in `4.2.6`, `4.3.5`, and `4.4.1`. Advisory: [GHSA-vw9h-w6h7-9wwm](https://github.com/poweradmin/poweradmin/security/advisories/GHSA-vw9h-w6h7-9wwm).
+
+## Finding 4: the "minimal" permission template is Administrator
+
+**In plain terms:** there is a helper whose job is to return the least-privileged template, the safe default for a caller that is not trusted to choose one. It ranks templates by how many permission rows they have, and because `user_is_ueberuser` is a single row, the Administrator template has the fewest. Delete the Guest template and "minimal" becomes admin.
+
+`UserManager::getMinimalPermissionTemplateId()` ranks with:
+
+```sql
+SELECT id FROM perm_templ pt ... ORDER BY perm_count ASC, pt.name ASC LIMIT 1
+```
+
+Row counts on the shipped schema make the problem concrete:
+
+| Template | Rows in `perm_templ_items` |
+| --- | --- |
+| Guest | 0 |
+| Administrator | 1 |
+| Viewer | 2 |
+| Editor | 4 |
+| Zone Manager | 11 |
+
+Guest has zero rows and normally wins, so the helper works. With Guest gone, Administrator has the lowest count and is returned as "minimal". `PermissionTemplateAssignmentGuard::apply()` then uses that result as the default for callers without template-assignment rights. The guard correctly rejects an explicit `perm_templ` from a caller that lacks `user_edit_templ_perm` or `user_is_ueberuser`, which is what stops a `user_add_new` holder from naming the admin template directly. The bug is the other half: if `perm_templ` is omitted, the guard injects the helper's result into the input, and the helper is now returning Administrator.
+
+<ReasoningTrace
+  label="klue · ranking privilege by row count inverts it"
+  lines={[
+    {
+      time: '03:10',
+      role: 'AGENT',
+      text: `getMinimalPermissionTemplateId orders by perm_count ASC. user_is_ueberuser is one row, so Administrator has perm_count 1, below Viewer (2), Editor (4), Zone Manager (11). Only Guest (0) ranks under it.`,
+    },
+    {
+      time: '03:13',
+      role: 'AGENT',
+      text: `PermissionTemplateAssignmentGuard rejects an explicit perm_templ from a caller without user_edit_templ_perm, but if perm_templ is omitted it injects the "minimal" default. With Guest deleted that default is Administrator. A user_add_new holder who omits perm_templ gets a superuser.`,
+    },
+  ]}
+/>
+
+Reproduced on a build at commit `d814d61` on `127.0.0.1:8123`, with a delegated account holding only `user_add_new`:
+
+```text
+# ranking
+Guest present  -> getMinimalPermissionTemplateId -> Guest         IS_UEBERUSER=no
+Guest deleted  -> getMinimalPermissionTemplateId -> Administrator  IS_UEBERUSER=YES
+
+# control: explicit perm_templ is refused
+POST /api/v2/users  {... "perm_templ": 1 ...}  -> 403 "Setting perm_templ requires user_edit_templ_perm or user_is_ueberuser"
+
+# bypass: omit perm_templ
+POST /api/v2/users  {... no perm_templ ...}    -> 201, user id 17 assigned to Administrator, active
+# the new account logs in; /users, /permissions/templates, /supermasters all return 200
+```
+
+The affected call sites are `Api/V2/UsersController::createUser()`, the legacy `Api/V1/UsersController`, `AddUserController.php` (which additionally has a hardcoded `?? '1'` Administrator fallback), and `AddGroupController.php`. This is Finding 3 from another angle: a "least privilege" default that is not least privilege, reached through the ordinary user-creation path instead of through SSO.
+
+**Classification.** CWE-269 (Improper Privilege Management). Assigned **CVE-2026-115460**, rated High, CVSS 7.5 (`CVSS:3.1/AV:N/AC:H/PR:L/UI:N/S:U/C:H/I:H/A:H`). Affects 4.1.0 through 4.2.5, 4.3.0 through 4.3.4, and 4.4.0. Fixed in `4.2.6`, `4.3.5`, and `4.4.1`. Advisory: [GHSA-jq2m-gjfr-82cg](https://github.com/poweradmin/poweradmin/security/advisories/GHSA-jq2m-gjfr-82cg).
+
+## Finding 5: the SOA/NS rule checks the record type the attacker sends, not the one being overwritten
+
+**In plain terms:** one permission lets a customer edit the records in their own zone but keeps them off the SOA and NS records. The check looks at the record type in the request. Submit an edit for an existing SOA or NS record but label it as an `A` record, and the check passes while the write still lands on the protected row.
+
+The bug is in `RecordManager::editRecord()`. It loads the existing record with `$recordRepository->getRecordDetailsFromRecordId($record['rid'])`, which includes the record's real stored type, but it uses that result only to set `$record['zid']`. When `$perm_edit == "own_as_client"`, the guard compares only `$record['type']`, the type submitted in the request, against `SOA` and `NS`. It never looks at the type of the record actually being modified.
+
+The API gets this right. `Api/V2/ZonesRecordsBulkController::performUpdateOperation()` checks both the existing type (through `permissionService->canEditZoneRecord`) and the requested new type, and returns a 403 "You do not have permission to edit this record type" on failure. That the web form and the API disagree is what marks the web behavior as a defect rather than intended design.
+
+<ReasoningTrace
+  label="klue · the guard reads the submitted type, the write uses the stored row"
+  lines={[
+    {
+      time: '02:40',
+      role: 'AGENT',
+      text: `editRecord loads the stored record by rid but only takes zid from it. The own_as_client guard tests $record['type'], the request-supplied type, against SOA/NS. The rid identifies the real row to overwrite, and nothing checks that row's actual type.`,
+    },
+    {
+      time: '02:42',
+      role: 'AGENT',
+      text: `So submitting rid of an SOA record with type=A passes the guard and writes over the SOA. The API path checks both the stored and requested type via canEditZoneRecord, so this is a web-form divergence, not policy.`,
+    },
+  ]}
+/>
+
+Reproduced on a build at commit `d814d61` with a tenant on the Editor template (id 3, which includes `zone_content_edit_own_as_client`):
+
+```text
+# SOA, rid 116
+type=SOA                         -> "You do not have the permission to edit this SOA record."
+type=A,  content 6.6.6.6         -> "Zone has been updated successfully."
+# records row becomes:  116|client.test|A|6.6.6.6
+
+# NS, rid 117
+type=NS                          -> refused (NS equivalent message)
+type=TXT, content "pwned-by-client" -> success
+# records row becomes:  117|client.test|TXT|"pwned-by-client"
+```
+
+Destroying the apex SOA stops PowerDNS serving the zone authoritatively and breaks the Poweradmin UI, since the serial-mismatch guard aborts once no SOA can be read. Overwriting an apex NS removes a mandated nameserver from the delegation set. `addRecord()` still refuses to create new SOA or NS rows at this level, so the advisory frames this as destructive rather than a full redelegation to attacker infrastructure. A related template-driven SOA/NS bypass is tracked separately as GHSA-v4f7-j9p4-crpj.
+
+**Classification.** CWE-863 (Incorrect Authorization). Rated High, CVSS 8.1 (`CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:N/I:H/A:H`). A CVE has been requested and is pending. Affects 3.0.0 through 3.9.11, 4.0.0 through 4.2.5, 4.3.0 through 4.3.4, and 4.4.0. Fixed in `3.9.12`, `4.2.6`, `4.3.5`, and `4.4.1`. Advisory: [GHSA-3h74-qh4c-64gg](https://github.com/poweradmin/poweradmin/security/advisories/GHSA-3h74-qh4c-64gg).
+
+## Finding 6: a DNSSEC key toggle that any GET can trigger
+
+**In plain terms:** the controller that enables and disables a zone's DNSSEC signing key answers a plain GET and performs the toggle with no CSRF token. A logged-in operator who opens an attacker's page can be made to flip the key, which can take a zone's validation down.
+
+`DnssecToggleKeyController`, in `lib/Application/Controller/DnssecToggleKeyController.php`, serves `GET|POST /zones/{zone_id}/dnssec/keys/{key_id}/toggle`. It validates the numeric ids and zone-edit permission, then toggles immediately, calling `deactivateZoneKey()` if the key is active and `activateZoneKey()` otherwise. There is no `confirm` step. Poweradmin has a working CSRF mechanism, `CsrfTokenService` with a random token in `$_SESSION['csrf_token']` compared by `hash_equals`, and the destructive controllers that use it wrap the action the usual way:
+
+```php
+// the pattern in DeleteRecordController, DeleteDomainController, DeleteUserController, ...
+if ($this->isPost()) {
+    $this->validateCsrfToken();
+    // ... perform the action
+}
+```
+
+`DnssecToggleKeyController` omits both the `isPost()` gate and `validateCsrfToken()`. `SameSite=Lax` does not save it: the session cookie is set `SameSite=Lax`, which still rides along on cross-site top-level GET navigations such as `window.location`, an `<a target="_blank">`, a `<meta http-equiv="refresh">`, or a 302 from the attacker's server. It only blocks cross-site subresource loads like `<img src>`.
+
+<ReasoningTrace
+  label="klue · a state change over GET with no token, and Lax does not cover it"
+  lines={[
+    {
+      time: '01:30',
+      role: 'AGENT',
+      text: `DnssecToggleKeyController accepts GET and performs the toggle with no isPost() or validateCsrfToken(). The sibling delete controllers all gate on isPost() then validateCsrfToken(), so the mechanism exists and this controller simply does not use it.`,
+    },
+    {
+      time: '01:33',
+      role: 'AGENT',
+      text: `The session cookie is SameSite=Lax, which is sent on top-level cross-site GET navigation. So an attacker page can navigate the operator's browser to the toggle URL and the cookie goes with it. This is reachable, not theoretical.`,
+    },
+  ]}
+/>
+
+Reproduced on a build at commit `d814d61` with a mock PowerDNS API on `127.0.0.1:9999`, issuing plain GETs with the session cookie and no token:
+
+```text
+Set-Cookie: PHPSESSID=...; path=/; HttpOnly; SameSite=Lax
+
+GET /zones/13/dnssec/keys/1/toggle  -> 302 Location: /zones/13/dnssec
+  backend log:  PUT /api/v1/servers/localhost/zones/admin-zone.test/cryptokeys/1  BODY={"active":false}
+
+GET /zones/13/dnssec/keys/1/toggle  -> 302 (again)
+  backend log:  BODY={"active":true}        # the key is flipped back
+```
+
+Deactivating a signing key while its DS record still sits in the parent zone makes the zone `BOGUS` to validating resolvers, which is an outage for a large share of clients, while the zone still looks healthy from inside Poweradmin. This advisory originally covered five endpoints with the same omission; the template-record delete, template delete, supermaster delete, and permission-template delete are now tracked as GHSA-vgcj-qcxf-v8p5, GHSA-3xjq-2xjr-22gq, GHSA-pp7c-29cm-2778, and GHSA-8hpx-j299-mp92.
+
+**Classification.** CWE-352 (Cross-Site Request Forgery). Rated High, CVSS 8.1 (`CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:N/I:H/A:H`). A CVE has been requested and is pending. Affects 3.0.0 through 3.9.11, 4.0.0 through 4.2.5, 4.3.0 through 4.3.4, and 4.4.0. Fixed in `3.9.12`, `4.2.6`, `4.3.5`, and `4.4.1`. Advisory: [GHSA-rjcc-m8cx-6p4c](https://github.com/poweradmin/poweradmin/security/advisories/GHSA-rjcc-m8cx-6p4c).
+
+## Finding 7: the installer decides who is local from a header the client sends
+
+**In plain terms:** the installer can be restricted to a set of IP addresses. It reads the client's address out of the `X-Forwarded-For` header, which the client fills in, so a remote attacker can claim an allowed address and walk through setup.
+
+The weak code is `InstallSecurityService::getClientIp()` in `install/helpers/InstallSecurityService.php`, feeding `checkIpAccess()`. When the allow-list is on (the shipped entry is `127.0.0.1`), `getClientIp()` reads `X-Forwarded-For` whenever it is present, with no trusted-proxy concept and no regard for `REMOTE_ADDR`. It takes the last comma-separated element with `end()`, which is fully attacker-controlled, and if that is a valid IP it returns it. `checkIpAccess()` then compares that value to the allow-list, so a request carrying `X-Forwarded-For: 127.0.0.1` passes. Taking the last element also inverts normal proxy semantics, where the real client is the leftmost entry, so a genuinely proxied request from an allowed client is the one that gets rejected.
+
+Poweradmin already has a correct version of this function elsewhere. `lib/Infrastructure/Utility/IpAddressRetriever::getClientIp()` only consults forwarded headers when `REMOTE_ADDR` is itself private or reserved. The installer ships a separate, weaker copy of the same job.
+
+<ReasoningTrace
+  label="klue · the installer trusts X-Forwarded-For and ignores REMOTE_ADDR"
+  lines={[
+    {
+      time: '00:58',
+      role: 'AGENT',
+      text: `InstallSecurityService::getClientIp reads X-Forwarded-For whenever present, takes end() of the list, and returns it if it parses as an IP, with no trusted-proxy check and no REMOTE_ADDR gate. checkIpAccess compares that to the allow-list.`,
+    },
+    {
+      time: '01:01',
+      role: 'AGENT',
+      text: `So X-Forwarded-For: 127.0.0.1 from any remote host passes the allow-list. The correct IpAddressRetriever::getClientIp in lib/ only trusts forwarded headers when REMOTE_ADDR is private or reserved. The installer has a second, weaker implementation.`,
+    },
+  ]}
+/>
+
+Because a single-host `curl` always connects from `127.0.0.1`, the bypass is clearest in a direct resolution test with a non-local `REMOTE_ADDR`, reproduced at commit `d814d61`:
+
+```text
+REMOTE_ADDR = 198.51.100.23
+
+no header                         -> resolves 198.51.100.23   -> allowed: NO
+X-Forwarded-For: 127.0.0.1        -> resolves 127.0.0.1       -> allowed: YES   (bypass)
+```
+
+The window is specific: `ip_access.enabled` ships as `false`, so this only matters for operators who turned the allow-list on, and `Installer::run()` aborts every step but the last once `config/settings.php` exists ("There is already a configuration file in place"). The exposure is the gap between deploying the code and finishing configuration. In that gap an unauthenticated remote attacker can reach every install step, point the installer at a database, apply the schema, and create an administrator with a chosen password; if they can also authenticate to that database (for example with credentials sitting in a compose file) the result is persistent superuser control of every zone. The official container images exclude `install/` through `.dockerignore` and are not affected the same way; source, archive, and git-checkout deployments are.
+
+**Classification.** CWE-290 (Authentication Bypass by Spoofing). Assigned **CVE-2026-115458**, rated High, CVSS 8.1 (`CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H`). Affects 3.0.0 through 3.9.11, 4.0.0 through 4.2.5, 4.3.0 through 4.3.4, and 4.4.0. Fixed in `3.9.12`, `4.2.6`, `4.3.5`, and `4.4.1`. Advisory: [GHSA-q7r4-26g9-q7cv](https://github.com/poweradmin/poweradmin/security/advisories/GHSA-q7r4-26g9-q7cv).
+
+## Why these happened
+
+None of these is exotic, and that is the point. Six of the seven are the same mistake in different places: a check that resolves a missing or attacker-controlled input by allowing it instead of refusing. The default template cannot be found, so grant the first row. The email is unverified, so trust it. The "minimal" role is ranked by a proxy that happens to favor the admin template, so hand it out. The record type is read from the request instead of the row, the client IP from a header instead of the connection, and the DNSSEC toggle from a GET with no token. In almost every case the safe answer was already implemented somewhere else in the same codebase: the API path checks both record types, `IpAddressRetriever` reads forwarded headers correctly, and the delete controllers all validate a CSRF token. The bug was a second, weaker path that skipped the control the maintainers had already built.
+
+That is the kind of thing KLUE is good at finding, because it does not stop at "there is a check here, good." It asks what the check assumes, whether the same capability is reachable by a path the check does not cover, and what the code does when the assumption is false, and then it goes and tries it. A person on our side reproduced every one of these on a real install before it left the building. That is the division of labor we rely on: the agent reads the whole surface and asks the awkward questions, and an engineer confirms the answer before anyone else hears about it.
+
+## Impact
+
+The seven do not all land in the same place:
+
+- **Code execution (Finding 1).** A tenant with the shipped Zone Manager role runs commands as the PowerDNS user, which on a default install is root. That reaches `pdns.conf`, the backend credentials and API key, the DNSSEC keys, every zone the server is authoritative for, and the ability to stop the service. On a multi-tenant install it is a full break out of the tenancy.
+- **Administrator takeover (Findings 2, 3, 4).** Three separate paths end in a `user_is_ueberuser` account: SSO linking by unverified email, SSO provisioning falling back to the admin template, and the user-creation guard injecting the admin template as its "minimal" default. Any one of them yields control of all zones, users, templates, API keys, and DNSSEC operations.
+- **Zone-apex tampering (Finding 5).** A restricted customer rewrites their own zone's SOA or NS records, which takes the zone down or removes a mandated nameserver.
+- **DNSSEC outage (Finding 6).** An attacker page that a logged-in operator visits deactivates a zone's signing key, making the zone BOGUS for validating resolvers while it still looks healthy in the panel.
+- **Installer takeover (Finding 7).** In the window before configuration is finished, an unauthenticated remote attacker reaches the installer and can create an administrator and point the app at a database of their choosing.
+
+## Mitigation
+
+The fixes are out. Upgrade to a patched release for your branch: **3.9.12** on 3.x, or **4.2.6**, **4.3.5**, or **4.4.1** on 4.x. Beyond upgrading:
+
+- If you run Poweradmin multi-tenant, treat this as urgent. The LUA-record bug is a tenant-to-root break, which is the one thing a multi-tenant setup exists to prevent.
+- If you use OIDC or SAML, after upgrading set `link_by_email` to false, require verified emails at the provider, and confirm your configured default permission template exists, matches its name exactly, and is not the Administrator template. Audit `oidc_user_links` for subject bindings to privileged accounts you did not create.
+- Make sure the installer is not reachable. It should be removed or locked once setup is done, regardless of the `X-Forwarded-For` fix. Container images built from the official Dockerfiles already exclude `install/`.
 
 ## Disclosure
 
-All seven findings were reported to the Poweradmin maintainers with the affected behavior, the conditions to reproduce it, and the impact. Each was reviewed, validated, and fixed. Four were assigned CVEs, all rated High: CVE-2026-115458, CVE-2026-115459, CVE-2026-115460, and CVE-2026-115461. The remaining three, including the Critical LUA-record code execution, are fixed as well and have CVEs requested and pending; this post will be updated with those IDs once they are issued. Fixes landed across the maintained branches, in 3.9.12, 4.2.6, 4.3.5, and 4.4.1. Our thanks to the maintainers for engaging with the full set and for a straightforward triage.
-
-If you run Poweradmin, especially multi-tenant, update to a fixed release now. Treat the LUA-record and SSO findings as the ones to act on first, and confirm that your installer is not reachable after setup.
+All seven were reported to the Poweradmin maintainers with the behavior, a reproduction, and the impact. Every one was confirmed and fixed. Four were assigned CVEs, all rated High: CVE-2026-115458, CVE-2026-115459, CVE-2026-115460, and CVE-2026-115461. The remaining three, including the Critical LUA-record code execution, are fixed as well, with CVEs requested and still pending; we will add the IDs here once they are issued. The fixes shipped across the maintained branches in 3.9.12, 4.2.6, 4.3.5, and 4.4.1. Thanks to the maintainers for taking the whole set and triaging it quickly.
 
 ## References
 
-- LUA record injection via zone metadata, CVE pending: [GHSA-cpw8-xprw-73x5](https://github.com/poweradmin/poweradmin/security/advisories/GHSA-cpw8-xprw-73x5)
+- LUA record code execution via zone metadata, CVE pending: [GHSA-cpw8-xprw-73x5](https://github.com/poweradmin/poweradmin/security/advisories/GHSA-cpw8-xprw-73x5)
 - OIDC/SAML unverified-email account takeover (nOAuth), CVE-2026-115459: [GHSA-h2h8-xprp-w5cc](https://github.com/poweradmin/poweradmin/security/advisories/GHSA-h2h8-xprp-w5cc)
 - SSO auto-provisioning fail-open to Administrator, CVE-2026-115461: [GHSA-vw9h-w6h7-9wwm](https://github.com/poweradmin/poweradmin/security/advisories/GHSA-vw9h-w6h7-9wwm)
-- getMinimalPermissionTemplateId() resolves to Administrator, CVE-2026-115460: [GHSA-jq2m-gjfr-82cg](https://github.com/poweradmin/poweradmin/security/advisories/GHSA-jq2m-gjfr-82cg)
+- getMinimalPermissionTemplateId() returns Administrator, CVE-2026-115460: [GHSA-jq2m-gjfr-82cg](https://github.com/poweradmin/poweradmin/security/advisories/GHSA-jq2m-gjfr-82cg)
 - SOA/NS write restriction bypass via record-type change, CVE pending: [GHSA-3h74-qh4c-64gg](https://github.com/poweradmin/poweradmin/security/advisories/GHSA-3h74-qh4c-64gg)
-- CSRF on GET-triggered state-changing endpoints, CVE pending: [GHSA-rjcc-m8cx-6p4c](https://github.com/poweradmin/poweradmin/security/advisories/GHSA-rjcc-m8cx-6p4c)
+- DNSSEC key toggle CSRF over GET, CVE pending: [GHSA-rjcc-m8cx-6p4c](https://github.com/poweradmin/poweradmin/security/advisories/GHSA-rjcc-m8cx-6p4c)
 - Installer IP allow-list bypass via X-Forwarded-For, CVE-2026-115458: [GHSA-q7r4-26g9-q7cv](https://github.com/poweradmin/poweradmin/security/advisories/GHSA-q7r4-26g9-q7cv)
 - The Poweradmin project: [github.com/poweradmin/poweradmin](https://github.com/poweradmin/poweradmin)
 
