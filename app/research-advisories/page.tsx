@@ -4,14 +4,68 @@ import { genPageMetadata } from 'app/seo'
 export const metadata = genPageMetadata({
   title: 'Research & Advisories',
   description:
-    'Coordinated vulnerability disclosures from the Shellvoide / KLUE team, with assigned CVE IDs.',
+    'Coordinated vulnerability disclosures from the Shellvoide / KLUE team, with upstream advisories and CVE IDs.',
 })
 
 type Cve = { id: string; desc: string; advisory?: string }
-type Advisory = { name: string; ecosystem: string; writeup?: string; cves: Cve[] }
+type Advisory = {
+  name: string
+  ecosystem: string
+  writeup?: string
+  cves: Cve[]
+}
 
 // Packages with an assigned CVE, from the Shellvoide disclosure log.
 const advisories: Advisory[] = [
+  {
+    name: 'Poweradmin',
+    ecosystem: 'PHP',
+    writeup: '/poweradmin-seven-security-findings',
+    cves: [
+      {
+        id: 'CVE pending',
+        desc: 'Tenant-triggered code execution on the DNS server via LUA record injection through the zone metadata editor.',
+        advisory:
+          'https://github.com/poweradmin/poweradmin/security/advisories/GHSA-cpw8-xprw-73x5',
+      },
+      {
+        id: 'CVE-2026-115459',
+        desc: 'OIDC/SAML account linking trusts an unverified email claim, allowing takeover of a local administrator account (nOAuth pattern).',
+        advisory:
+          'https://github.com/poweradmin/poweradmin/security/advisories/GHSA-h2h8-xprp-w5cc',
+      },
+      {
+        id: 'CVE-2026-115461',
+        desc: 'Fail-open privilege assignment: OIDC/SAML auto-provisioning grants Administrator when the default permission template cannot be resolved.',
+        advisory:
+          'https://github.com/poweradmin/poweradmin/security/advisories/GHSA-vw9h-w6h7-9wwm',
+      },
+      {
+        id: 'CVE-2026-115460',
+        desc: 'Privilege escalation via getMinimalPermissionTemplateId(): the least-privilege default resolves to Administrator.',
+        advisory:
+          'https://github.com/poweradmin/poweradmin/security/advisories/GHSA-jq2m-gjfr-82cg',
+      },
+      {
+        id: 'CVE pending',
+        desc: 'SOA/NS write restriction for zone_content_edit_own_as_client bypassed by changing the record type in the same request.',
+        advisory:
+          'https://github.com/poweradmin/poweradmin/security/advisories/GHSA-3h74-qh4c-64gg',
+      },
+      {
+        id: 'CVE pending',
+        desc: 'Missing CSRF protection on GET-triggered state-changing endpoints (DNSSEC key toggle, template/supermaster/permission-template deletion).',
+        advisory:
+          'https://github.com/poweradmin/poweradmin/security/advisories/GHSA-rjcc-m8cx-6p4c',
+      },
+      {
+        id: 'CVE-2026-115458',
+        desc: 'Installer IP allow-list bypass via a spoofable X-Forwarded-For header.',
+        advisory:
+          'https://github.com/poweradmin/poweradmin/security/advisories/GHSA-q7r4-26g9-q7cv',
+      },
+    ],
+  },
   {
     name: 'follow-redirects',
     ecosystem: 'npm',
@@ -119,7 +173,12 @@ const advisories: Advisory[] = [
 const cveLink = (c: Cve) => c.advisory || `https://www.cve.org/CVERecord?id=${c.id}`
 
 export default function ResearchAdvisoriesPage() {
-  const totalCves = advisories.reduce((n, p) => n + p.cves.length, 0)
+  const isAssigned = (c: Cve) => c.id.startsWith('CVE-')
+  const totalCves = advisories.reduce((n, p) => n + p.cves.filter(isAssigned).length, 0)
+  const pendingCount = advisories.reduce(
+    (n, p) => n + p.cves.filter((c) => !isAssigned(c)).length,
+    0
+  )
 
   return (
     <div className="pb-16">
@@ -128,59 +187,68 @@ export default function ResearchAdvisoriesPage() {
           Research &amp; Advisories
         </h1>
         <p className="mt-4 max-w-2xl leading-7 text-gray-600">
-          Coordinated vulnerability disclosures from the Shellvoide / KLUE team. Each entry below
-          has an assigned CVE.
+          Coordinated vulnerability disclosures from the Shellvoide / KLUE team. Each entry links to
+          the upstream advisory; CVE IDs are shown once assigned.
         </p>
         <p className="mt-3 text-sm font-medium text-gray-500">
-          {totalCves} CVEs · {advisories.length} packages
+          {totalCves} CVEs · {pendingCount} pending · {advisories.length} packages
         </p>
       </div>
 
       <div className="space-y-6">
-        {advisories.map((pkg) => (
-          <section key={pkg.name} className="rounded-3xl bg-gray-50 p-6 sm:p-8">
-            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-              <div className="flex items-center gap-3">
-                <h2 className="text-xl font-bold tracking-tight text-gray-900">{pkg.name}</h2>
-                <span className="rounded-full border border-gray-200 bg-white px-2.5 py-0.5 text-xs font-medium text-gray-500">
-                  {pkg.ecosystem}
-                </span>
-                <span className="text-xs font-medium text-gray-400">
-                  {pkg.cves.length} {pkg.cves.length === 1 ? 'CVE' : 'CVEs'}
-                </span>
-              </div>
-              {pkg.writeup && (
-                <Link
-                  href={pkg.writeup}
-                  className="text-primary-600 hover:text-primary-700 inline-flex items-center gap-1.5 text-sm font-semibold"
-                >
-                  Read the writeup
-                  <span aria-hidden>→</span>
-                </Link>
-              )}
-            </div>
-
-            <ul className="mt-5 divide-y divide-gray-200">
-              {pkg.cves.map((c) => (
-                <li
-                  key={c.id}
-                  className="grid gap-1.5 py-4 sm:grid-cols-[180px_1fr] sm:gap-6 sm:py-3.5"
-                >
+        {advisories.map((pkg) => {
+          const assigned = pkg.cves.filter(isAssigned).length
+          const pending = pkg.cves.length - assigned
+          return (
+            <section key={pkg.name} className="rounded-3xl bg-gray-50 p-6 sm:p-8">
+              <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+                <div className="flex items-center gap-3">
+                  <h2 className="text-xl font-bold tracking-tight text-gray-900">{pkg.name}</h2>
+                  <span className="rounded-full border border-gray-200 bg-white px-2.5 py-0.5 text-xs font-medium text-gray-500">
+                    {pkg.ecosystem}
+                  </span>
+                  <span className="text-xs font-medium text-gray-400">
+                    {[
+                      assigned > 0 ? `${assigned} CVE${assigned === 1 ? '' : 's'}` : null,
+                      pending > 0 ? `${pending} pending` : null,
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')}
+                  </span>
+                </div>
+                {pkg.writeup && (
                   <Link
-                    href={cveLink(c)}
-                    className="text-primary-700 hover:text-primary-800 font-mono text-sm font-semibold"
+                    href={pkg.writeup}
+                    className="text-primary-600 hover:text-primary-700 inline-flex items-center gap-1.5 text-sm font-semibold"
                   >
-                    {c.id}
-                    <span aria-hidden className="ml-1 text-gray-400">
-                      ↗
-                    </span>
+                    Read the writeup
+                    <span aria-hidden>→</span>
                   </Link>
-                  <p className="text-sm leading-6 text-gray-600">{c.desc}</p>
-                </li>
-              ))}
-            </ul>
-          </section>
-        ))}
+                )}
+              </div>
+
+              <ul className="mt-5 divide-y divide-gray-200">
+                {pkg.cves.map((c) => (
+                  <li
+                    key={c.advisory ?? c.id}
+                    className="grid gap-1.5 py-4 sm:grid-cols-[180px_1fr] sm:gap-6 sm:py-3.5"
+                  >
+                    <Link
+                      href={cveLink(c)}
+                      className="text-primary-700 hover:text-primary-800 font-mono text-sm font-semibold"
+                    >
+                      {c.id}
+                      <span aria-hidden className="ml-1 text-gray-400">
+                        ↗
+                      </span>
+                    </Link>
+                    <p className="text-sm leading-6 text-gray-600">{c.desc}</p>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )
+        })}
       </div>
     </div>
   )
