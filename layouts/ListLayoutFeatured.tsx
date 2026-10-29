@@ -35,7 +35,7 @@ export default function ListLayoutFeatured({ posts, title }: ListLayoutProps) {
 
       {featured && (
         <Link
-          href={`/blog/${featured.path}`}
+          href={`/${featured.path}`}
           className="group block rounded-3xl bg-gray-50 p-7 transition-colors duration-200 hover:bg-gray-100 sm:p-9"
         >
           <div className="flex items-center gap-3 text-xs font-semibold tracking-wide uppercase">
@@ -68,7 +68,7 @@ export default function ListLayoutFeatured({ posts, title }: ListLayoutProps) {
             {rest.map((post) => (
               <Link
                 key={post.path}
-                href={`/blog/${post.path}`}
+                href={`/${post.path}`}
                 className="group flex flex-col rounded-2xl bg-gray-50 p-6 transition-colors duration-200 hover:bg-gray-100"
               >
                 <time

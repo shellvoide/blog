@@ -70,7 +70,7 @@ export default function PostLayout({ content, next, prev, children }: LayoutProp
             <div>
               {prev?.path && (
                 <Link
-                  href={`/blog/${prev.path}`}
+                  href={`/${prev.path}`}
                   className="text-primary-600 hover:text-primary-700 transition-colors"
                   aria-label={`Previous post: ${prev.title}`}
                 >
@@ -81,7 +81,7 @@ export default function PostLayout({ content, next, prev, children }: LayoutProp
             <div className="sm:text-right">
               {next?.path && (
                 <Link
-                  href={`/blog/${next.path}`}
+                  href={`/${next.path}`}
                   className="text-primary-600 hover:text-primary-700 transition-colors"
                   aria-label={`Next post: ${next.title}`}
                 >

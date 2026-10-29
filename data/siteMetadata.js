@@ -9,7 +9,7 @@ const siteMetadata = {
   siteUrl: 'https://shellvoide.com/blog',
   siteRepo: 'https://github.com/shellvoide/blog',
   siteLogo: `${process.env.BASE_PATH || ''}/static/images/logo.png`,
-  socialBanner: `${process.env.BASE_PATH || ''}/static/images/twitter-card.png`,
+  socialBanner: '/static/images/twitter-card.png',
   // mastodon: 'https://mastodon.social/@mastodonuser',
   email: 'info@shellvoide.com',
   github: 'https://github.com/shellvoide',

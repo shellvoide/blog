@@ -10,7 +10,7 @@ const Header = () => {
     <header className="sticky top-0 z-50 px-4 pt-4">
       <div className="mx-auto flex max-w-3xl items-center justify-between gap-4 rounded-full border border-gray-200/70 bg-white/80 px-4 py-2.5 shadow-sm backdrop-blur-md sm:px-5 xl:max-w-5xl">
         <Link
-          href="/blog"
+          href="/"
           aria-label="Shellvoide Blog"
           className="group flex shrink-0 items-center gap-2.5"
         >

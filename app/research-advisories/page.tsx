@@ -15,7 +15,7 @@ const advisories: Advisory[] = [
   {
     name: 'follow-redirects',
     ecosystem: 'npm',
-    writeup: '/blog/follow-redirects-credential-header-leaks',
+    writeup: '/follow-redirects-credential-header-leaks',
     cves: [
       {
         id: 'CVE-2026-111756',
@@ -34,7 +34,7 @@ const advisories: Advisory[] = [
   {
     name: 'Hydra',
     ecosystem: 'PyPI',
-    writeup: '/blog/hydra-untrusted-config-rce',
+    writeup: '/hydra-untrusted-config-rce',
     cves: [
       {
         id: 'CVE-2026-106441',
@@ -53,7 +53,7 @@ const advisories: Advisory[] = [
   {
     name: 'kin-openapi',
     ecosystem: 'Go',
-    writeup: '/blog/kin-openapi-three-dos-bugs',
+    writeup: '/kin-openapi-three-dos-bugs',
     cves: [
       {
         id: 'CVE-2026-100352',
@@ -75,7 +75,7 @@ const advisories: Advisory[] = [
   {
     name: 'axios',
     ecosystem: 'npm',
-    writeup: '/blog/axios-prototype-pollution-method-gadget',
+    writeup: '/axios-prototype-pollution-method-gadget',
     cves: [
       {
         id: 'CVE-2026-101902',
