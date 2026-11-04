@@ -54,7 +54,7 @@ const advisories: Advisory[] = [
     writeup: '/poweradmin-seven-security-findings',
     cves: [
       {
-        id: 'CVE pending',
+        id: 'CVE-2026-120711',
         desc: 'Tenant-triggered code execution on the DNS server via LUA record injection through the zone metadata editor.',
         advisory:
           'https://github.com/poweradmin/poweradmin/security/advisories/GHSA-cpw8-xprw-73x5',
@@ -78,13 +78,13 @@ const advisories: Advisory[] = [
           'https://github.com/poweradmin/poweradmin/security/advisories/GHSA-jq2m-gjfr-82cg',
       },
       {
-        id: 'CVE pending',
+        id: 'CVE-2026-121699',
         desc: 'SOA/NS write restriction for zone_content_edit_own_as_client bypassed by changing the record type in the same request.',
         advisory:
           'https://github.com/poweradmin/poweradmin/security/advisories/GHSA-3h74-qh4c-64gg',
       },
       {
-        id: 'CVE pending',
+        id: 'CVE-2026-120713',
         desc: 'Missing CSRF protection on GET-triggered state-changing endpoints (DNSSEC key toggle, template/supermaster/permission-template deletion).',
         advisory:
           'https://github.com/poweradmin/poweradmin/security/advisories/GHSA-rjcc-m8cx-6p4c',
