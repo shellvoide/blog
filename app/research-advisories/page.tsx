@@ -18,6 +18,37 @@ type Advisory = {
 // Packages with an assigned CVE, from the Shellvoide disclosure log.
 const advisories: Advisory[] = [
   {
+    name: 'SQLParse',
+    ecosystem: 'PyPI',
+    writeup: '',
+    cves: [
+      {
+        id: 'CVE-2026-112307',
+        desc: 'Generated PHP snippets allow code injection through unescaped `$` interpolation',
+        advisory:
+          'https://github.com/andialbrecht/sqlparse/security/advisories/GHSA-xmww-55xg-h3vc',
+      },
+      {
+        id: 'CVE pending',
+        desc: 'CPU Exhaustion via O(N^2) Regex Backtracking in sqlparse.utils.SPLIT_REGEX',
+        advisory:
+          'https://github.com/andialbrecht/sqlparse/security/advisories/GHSA-3r5h-5jcg-gmgg',
+      },
+    ],
+  },
+  {
+    name: 'NocoDB',
+    ecosystem: 'npm',
+    writeup: '/nocodb-oauth-token-session-confusion',
+    cves: [
+      {
+        id: 'CVE pending',
+        desc: 'OAuth Access Token Accepted as First-Party Session',
+        advisory: 'https://github.com/nocodb/nocodb/security/advisories/GHSA-xmfr-pc8j-4xh5',
+      },
+    ],
+  },
+  {
     name: 'Poweradmin',
     ecosystem: 'PHP',
     writeup: '/poweradmin-seven-security-findings',
@@ -85,6 +116,7 @@ const advisories: Advisory[] = [
       },
     ],
   },
+
   {
     name: 'Hydra',
     ecosystem: 'PyPI',
