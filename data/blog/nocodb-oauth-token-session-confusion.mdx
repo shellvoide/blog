@@ -1,0 +1,321 @@
+---
+title: 'A Valet Key to the Whole House: NocoDB Accepted OAuth Tokens as Full Sessions'
+summary: "NocoDB signed its OAuth access tokens with the same secret as its first-party session tokens, so a token a user granted for a narrow OAuth scope was accepted by the session strategy, the enterprise SSO-to-session exchange, and the realtime socket handshake as a fully logged-in browser. We walk the seam: why a validly signed JWT with no 'I am only a valet key' marker sailed past every gate, the CWE-287 root cause, and the single distinction the 2026.10.1 fix finally draws. Reported and credited; tracked as GHSA-xmfr-pc8j-4xh5."
+date: '2026-11-04'
+lastmod: '2026-11-04'
+authors: ['appsec-research']
+category: 'research-advisories'
+tags:
+  [
+    'nocodb',
+    'oauth',
+    'jwt',
+    'authentication',
+    'broken-authentication',
+    'token-confusion',
+    'session-management',
+    'cwe-287',
+    'vulnerability-research',
+    'case-study',
+    'disclosure',
+    'appsec',
+  ]
+draft: false
+layout: PostSimple
+canonicalUrl: 'https://shellvoide.com/blog/nocodb-oauth-token-session-confusion'
+---
+
+> [!NOTE]
+> **GHSA-xmfr-pc8j-4xh5** · NocoDB · CWE-287 (Improper Authentication) · CVSS 8.7 (High)
+> Affected: `< 2026.10.1` · Fixed: **2026.10.1** · Reported through coordinated disclosure and fixed by the NocoDB team.
+
+Think about the last time you clicked **Authorize** on an OAuth screen. Somewhere on that page was a little list (_read your bases_, maybe, or _see your workspace_), and you skimmed it the way everyone skims it, because the whole point of that list is that it is a _promise_. You are handing an app a key that opens one drawer and not the rest of the house. The scope you approve is the shape of the key.
+
+That promise only holds if something downstream actually reads the label on the key. NocoDB cut two kinds of keys with the same machine: a valet key for OAuth apps, and a house key for your own logged-in browser. And the lock on the front door never checked which one you put in. If you had the valet key, the door opened all the way.
+
+This is the story of how that happened, why it is the kind of bug that reads as correct line by line, and the one distinction the fix finally draws.
+
+We did not set out to audit NocoDB. We were a week deep in another engagement, buried to the elbows in someone else's authentication layer, when one of our researchers asked the question that starts half of our findings: _if this kind of mistake is this easy to make, who else has quietly made it?_ NocoDB was the next name we reached for. It is an open-source Airtable that most of the team had run at one point or another, the mechanics of consent screens were already fresh in mind from the week's work, and that was reason enough to spend an afternoon.
+
+We came at it the way we usually do, as a pair. A researcher read the authentication code by hand, slowly, the way you read a contract you expect to be bitten by. Alongside that, KLUE, our automation, fanned out across the repository and mapped every place the server signs a token and every place it checks one. The tooling is very good at drawing that map quickly and leaving nothing off it. The judgement about which two points on the map should never have been wired together is still a person's. This post is about those two points, and the single thread of trust that ran between them.
+
+## First, a one-minute primer
+
+If you write software for a living, skip ahead; none of this paragraph will be new. If you do not, stay for a minute, because the whole bug fits inside one idea and it is worth having that idea in your hand before the code shows up.
+
+When you log into a web app, the server does not want to ask for your password on every click. So the instant you prove who you are, it hands your browser a small signed pass, called a **token**, and from then on your browser shows that pass with every request. The pass says, in effect, _"the bearer is Dana, and the server itself vouches for it."_ That is what keeps you logged in.
+
+The "vouches for it" part is a **signature**. The server computes it using a secret key that only the server knows, and stamps it onto the pass like a wax seal. Anyone can _read_ what the pass says, but nobody can forge the seal without the secret, and the server can re-check the seal in under a millisecond. Change a single letter of the pass and the seal stops matching. That is the machinery behind nearly every "remember me" on the modern web.
+
+Now the catch this entire story turns on. A seal proves a pass is _genuine_. It says nothing about what the pass is _for_. If one office uses the same wax seal for both employee badges and visitor stickers, then a guard who only asks "is this seal real?" will wave a visitor sticker straight into the server room. That is the bug, in one sentence. Everything below is just the matter of where, exactly, NocoDB stamped its visitor stickers with the employee seal.
+
+## Two keys, one cutting machine
+
+NocoDB authenticates your browser with a JWT (a JSON Web Token, which is the formal name for the signed pass above). When you log in, the server mints one, drops it in a cookie, and from then on every request carries it in an `xc-auth` header. The code that stamps that token lives in a small helper, and it is worth reading closely, because everything downstream trusts it completely:
+
+```ts {7} showLineNumbers
+// packages/nocodb/src/services/users/helpers.ts  (lightly trimmed)
+export function genJwt(user, config, jwtOptions = {}) {
+  return jwt.sign(
+    {
+      ...user.extra,
+      email: user.email,
+      id: user.id,
+      roles: user.roles,
+      token_version: user.token_version,
+    },
+    config.auth.jwt.secret, // the one instance secret, NC_AUTH_JWT_SECRET
+    { expiresIn: '10h', ...config.auth.jwt.options, ...jwtOptions }
+  )
+}
+```
+
+Nothing surprising here. The payload says who you are: your `email`, your `id`, your `roles`, and a `token_version`. That last field is a quiet piece of good engineering: it is a counter stored on the user record, copied into every token, and checked on every request. Bump it on the server and every token ever issued for that user stops matching at once. It is the master kill-switch for "log me out everywhere." Hold on to it, because it reappears as an accomplice later.
+
+The token is signed with `config.auth.jwt.secret`, the single secret the instance was handed (or generated for itself) at startup. A session token, stripped of ceremony, is just this: _an assertion of identity, sealed by the house._
+
+> [!TIP]
+> **In plain terms.** `genJwt` is the key-cutting machine. You give it a person, it gives back a sealed pass that says "this is that person." The seal is made with the house's one secret.
+
+Now hold that thought, because NocoDB also speaks OAuth. It can issue **access tokens** to third-party apps so they can call its API on your behalf, within whatever scope you approved on the consent screen. And those access tokens were minted the same way: same `jwt.sign`, same `config.auth.jwt.secret`. One secret, one signing path, two very different intentions:
+
+- The **session token** means _"this is the user, acting as themselves, in their own browser. Let them do anything they are allowed to do."_
+- The **OAuth access token** is supposed to mean _"this is some app the user merely tolerated. Let it do the one narrow thing they consented to, and nothing else."_
+
+On the wire, signed by the same pen, they are the same kind of object. The only thing separating a valet key from a house key is the little paper tag you clip to it. So the entire safety of the system came down to a single question: when a token arrives at the front door, does the lock read the tag?
+
+## What the two keys actually look like
+
+A JWT is three pieces joined by dots: `header.payload.signature`. The first two are just readable JSON with the base64 wrapper peeled off; the third is the seal. Decode a NocoDB **session** token and you get roughly this:
+
+```json
+{
+  "email": "dana@acme.example",
+  "id": "us_1a2b3c4d5e6f7g",
+  "roles": "org-level-creator",
+  "token_version": "a1b2c3d4e5f6",
+  "iat": 1730700000,
+  "exp": 1730736000
+}
+```
+
+Decode the **OAuth access token** the same server minted for a third-party app, and you get the same person, sealed with the same secret, plus the OAuth bookkeeping that records what the user actually agreed to:
+
+```json
+{
+  "email": "dana@acme.example",
+  "id": "us_1a2b3c4d5e6f7g",
+  "roles": "org-level-creator",
+  "token_version": "a1b2c3d4e5f6",
+  "scope": "base:read",
+  "iat": 1730700050,
+  "exp": 1730736050
+}
+```
+
+There it is, sitting in plain sight: `"scope": "base:read"`. The user consented to _read one thing_, and the token faithfully records it. The catch is that the front door, as we are about to see, never reads that line. Same identity, same seal, and the one field that would mark this as a restricted valet key is a field the lock does not know to look at.
+
+## The lock that read the cut, not the tag
+
+NocoDB's front door is a Passport JWT strategy. Every authenticated request flows through its `validate()` method, which takes the decoded payload and decides who, if anyone, is standing there. Here it is, trimmed to the path that matters, with the three lines to watch highlighted:
+
+```ts {6,18,30} showLineNumbers
+// packages/nocodb/src/strategies/jwt.strategy.ts  (lightly trimmed)
+async validate(req, jwtPayload) {
+  if (jwtPayload.is_oauth_token && !jwtPayload.oauth_token_id)
+    NcError.unauthorized('Invalid token')
+
+  // set by GlobalGuard.authenticate(), not read from the wire
+  if (
+    jwtPayload.is_api_token ||
+    jwtPayload.is_oauth_token ||
+    jwtPayload.roles?.guest ||
+    jwtPayload.isPublicBase
+  ) {
+    return jwtPayload
+  }
+
+  if (!jwtPayload.email) NcError.unauthorized('Invalid token')
+
+  const user = await User.getByEmail(jwtPayload.email) // ← the token names a user; we load that user
+  if (!user) NcError.unauthorized('Token Expired. Please login again.')
+  await User.assertNotBlocked(user)
+
+  if (
+    !user.token_version ||
+    !jwtPayload.token_version ||
+    user.token_version !== jwtPayload.token_version
+  )
+    NcError.unauthorized('Token Expired. Please login again.')
+
+  const userWithRoles = await User.getWithRoles(req.context, user.id, { user, /* … */ })
+  return { ...userWithRoles, isAuthorized: true } // ← a full, interactive session
+}
+```
+
+Read it the way the server does, from the top. Passport has already verified the signature before this function even runs, so by the time we are here the seal is known genuine. Then `validate()` runs a short interview. Is this a guest, a public base, an API token, an OAuth token wearing its own internal marker? No. Does it name an email? Yes. Does that user exist and is the account un-blocked? Yes. Does the `token_version` still match, so the session has not been globally revoked? Yes. Load the roles, stamp `isAuthorized: true`, and hand back a fully interactive user.
+
+Every one of those checks passes for an OAuth access token, because an OAuth access token is a validly signed JWT that names a real, un-blocked user with a current `token_version`. It was cut on the same machine. The lock ran its fingers over the cut and found it genuine. **What the lock never asked is whether this key was ever meant to open _this_ door.** The scope the user consented to, that `"scope": "base:read"` sitting right there in the payload, is the entire reason an OAuth token exists as a separate thing, and it is simply not a concept this function has. There is no line in `validate()` that says _"and this must not be an access token."_
+
+> [!TIP]
+> **In plain terms.** The guard at the door checks three things: is the seal real, is this a real employee, and has their badge been cancelled. A visitor sticker carrying a real person's name passes all three. The guard never looks at the word "VISITOR" printed across it.
+
+Now look at the highlighted comment near the top: `// set by GlobalGuard.authenticate(), not read from the wire`. That early block is where tokens that carry their own marker (API tokens, OAuth tokens) are meant to be short-circuited and handed back as their limited selves. The whole thing leans on an assumption stated right there in the comment: these markers _come from a trusted internal guard, not from an attacker's request_. It is a reasonable assumption, and it is the load-bearing wall of the design. A shared signing secret quietly knocks it out. Once a token that the user handed to some third-party app is signed by the same key as a browser session, "where did this token come from?" stops being a question the front door can answer. It can only read the cut, and the cut is genuine.
+
+## Three doors, not one
+
+If the bug stopped at the main API it would already be bad. It did not stop there. The same token check guarded three different entrances, and all three honored the valet key.
+
+**The front door: the session strategy.** Present the OAuth access token to any first-party endpoint and you are authenticated as the granting user, with that user's full roles, not with the scope on the consent screen. Everything that user can read or change over the REST API, the token can now read or change.
+
+**The enterprise side door: the SSO exchange.** The Enterprise build ships a short-lived-token strategy (`short-lived-token.strategy.ts`) whose job is to take a single-sign-on token and trade it for a real session: the normal, intended "you arrived through your identity provider, here is your NocoDB session" handoff. That exchange also accepted an OAuth access token. And an exchange does not merely wave you through for one request; it _issues a full session, with a refresh token_. That is the detail that turns a nuisance into a foothold. A valet key, handed to the valet stand, came back as a house key **plus a spare you get to keep**. A short-lived, narrow grant is laundered into a durable, full-privilege session that outlives the original token, and keeps working even after the user later revokes the app.
+
+**The service entrance: the realtime socket.** NocoDB's live collaboration runs over a socket, and the handshake in `NocoSocket.ts` authenticated with the same token check. So the OAuth token did not just open the REST API; it opened the realtime channel too, the one that streams every change as it happens.
+
+Three entrances, three independent pieces of code, all asking the same question (_is this JWT ours?_) and not one of them asking the question that actually mattered.
+
+## Proof of concept
+
+A good proof of concept should make the claim undeniable while touching no one's real data. We will do it in two parts. The first part is fully offline and you can run it yourself in ten seconds; it proves the defect at the level of the logic. The second part shows the same defect end to end over HTTP against an instance you control.
+
+### Part one: the defect, on your own machine
+
+The claim is narrow and precise: _the session strategy accepts any token that is sealed with the instance secret and names a real user, and it never considers what the token was issued for._ We can demonstrate exactly that. The script below mints a token the way NocoDB's OAuth path does (sign an identity payload with the instance secret, and record the narrow `scope` the user consented to), then runs it through the session strategy's own acceptance logic, reproduced faithfully from `jwt.strategy.ts`.
+
+```js {13,34} showLineNumbers
+// poc-offline.js   ·   npm i jsonwebtoken   ·   node poc-offline.js
+const jwt = require('jsonwebtoken')
+
+// The ONE instance secret. In a real deployment this is NC_AUTH_JWT_SECRET,
+// and the whole point of the bug is that this single secret signs every
+// family of token the server issues.
+const INSTANCE_SECRET = 'the-single-instance-jwt-secret'
+
+// Mint an OAuth access token exactly as the token service does: an identity
+// payload, sealed with the instance secret. The only thing that makes it an
+// "OAuth" token and not a session is the scope the user agreed to, recorded
+// in a field the front door never reads.
+const oauthAccessToken = jwt.sign(
+  {
+    email: 'dana@acme.example',
+    id: 'us_1a2b3c4d5e6f7g',
+    roles: 'org-level-creator',
+    token_version: 'a1b2c3d4e5f6',
+    scope: 'base:read', // the valet-key label: read one base, nothing else
+  },
+  INSTANCE_SECRET,
+  { expiresIn: '10h' }
+)
+
+// The session strategy's acceptance logic, reproduced from jwt.strategy.ts.
+// Passport verifies the signature before validate() runs, so we verify first.
+function sessionStrategyValidate(token) {
+  const payload = jwt.verify(token, INSTANCE_SECRET) // seal genuine -> proceed
+
+  const user = getByEmail(payload.email) // the token names a user; load them
+  if (!user) throw new Error('Token Expired. Please login again.')
+  if (user.token_version !== payload.token_version)
+    throw new Error('Token Expired. Please login again.')
+
+  return { ...user, roles: payload.roles, isAuthorized: true } // full session
+}
+
+// Stand-in for User.getByEmail(): Dana is a real, un-blocked account.
+function getByEmail(email) {
+  return { id: 'us_1a2b3c4d5e6f7g', email, token_version: 'a1b2c3d4e5f6' }
+}
+
+console.log(sessionStrategyValidate(oauthAccessToken))
+```
+
+Run it and the session strategy hands back a fully authorized user:
+
+```text
+{
+  id: 'us_1a2b3c4d5e6f7g',
+  email: 'dana@acme.example',
+  token_version: 'a1b2c3d4e5f6',
+  roles: 'org-level-creator',
+  isAuthorized: true
+}
+```
+
+Read the two highlighted lines together. On line 13 we minted a token whose only instruction was `scope: 'base:read'`. On line 34 the strategy returned `isAuthorized: true` with the account's real `org-level-creator` roles. The scope went in and simply vanished; it appears nowhere in the verdict. The valet key opened the house, and the logic that opened it is a faithful copy of the real thing. Nothing here depends on a trick payload or a forged seal. It depends only on the one fact the advisory states: the two token families share a secret, and the verifier checks the seal, never the purpose.
+
+### Part two: the same thing, live over HTTP
+
+To watch it happen end to end, use an instance and an account you own, so no real person's data is ever in frame.
+
+1. Stand up NocoDB and enable its OAuth integration. Register an application, then, signed in as Dana, walk through the consent screen and approve it for the narrowest scope on offer (say, read-only access to a single base). You now hold an **OAuth access token** on Dana's behalf.
+2. That token is supposed to be good only for its grant. Instead, present it to a first-party endpoint that normally answers only to a logged-in browser session: the one that lists _every_ base the user can see.
+
+```http
+GET /api/v2/meta/bases HTTP/1.1
+Host: nocodb.acme.example
+xc-auth: <oauth_access_token>
+Accept: application/json
+```
+
+The server reads the seal, finds it genuine, loads Dana behind the email in the payload, and answers as if Dana's browser had asked. Back comes the whole list, not the single base the consent screen named:
+
+```json
+{
+  "list": [
+    { "id": "p_9f8e7d6c", "title": "Customer PII", "type": "database" },
+    { "id": "p_1a2b3c4d", "title": "Finance 2026", "type": "database" },
+    { "id": "p_55667788", "title": "Internal Roadmap", "type": "database" }
+  ],
+  "pageInfo": { "totalRows": 3 }
+}
+```
+
+The control that makes this airtight is a one-field diff. Use the token the way OAuth intended, against its scoped grant, and you get exactly the one base. Point the same token at the session-authenticated route above and you get all of them. Nothing about the token changed between the two requests. Only the door did, and the front door never asked what the key was for. On the Enterprise build, feed the token to the SSO exchange instead and it returns a brand-new session with a refresh token; aim it at the realtime socket and the live change-feed opens.
+
+> [!WARNING]
+> Run this only against instances and accounts you control, and patch to `2026.10.1` or later first if the instance is anything but a throwaway. The point is to confirm the behavior, not to touch data that is not yours.
+
+## Why a scanner never finds this, and why review almost does not
+
+There is no payload here. A scanner fires a request and grades the response against a catalog of known-bad; there is no signature for _"this token was authentic, but issued for a different purpose."_ The request is well-formed, the token is valid, the response is a clean `200`. Nothing looks wrong, because on the one axis a scanner measures, nothing _is_ wrong.
+
+Static analysis struggles for the mirror-image reason. Follow the OAuth access token: it is sealed with the instance secret by a legitimate call to a legitimate helper. Follow the session token: sealed by the same helper, the same way. A taint tracker walks two clean, authentic paths and moves on. The bug lives in the fact that those two paths _converge_ on one secret and one verifier, and "two things that should have been kept apart were not" is an absence. Absence has no fingerprint.
+
+Even careful human review has to survive a specific trap: `genJwt` and `validate()` each read as correct in isolation, and they live in different files. You only catch it if you hold both in your head at once, ask where the OAuth tokens get signed, and then feel the small cold moment of realizing the answer is _the same place, with the same key_. That moment is the whole finding. Everything after it is just writing down what you already know must be true.
+
+## The blast radius, in plain terms
+
+The advisory scores this **8.7, High**, and the CVSS vector reads `AV:N/AC:L/PR:L/UI:R/S:C/C:H/I:H/A:N`. Translated out of the jargon:
+
+- **Reachable over the network, low effort** (`AV:N/AC:L`): no special position, no race, no timing. One ordinary HTTPS request.
+- **A little access to start, and a click from the victim** (`PR:L/UI:R`): the attacker needs a token, which means a user had to approve the app on the consent screen at some point. That is the only "interaction" required, and it is the interaction users are trained to perform.
+- **Scope changed** (`S:C`): this is the letter that matters most. The damage escapes the component that issued the token. A grant that was supposed to be confined to the OAuth layer reaches straight into first-party APIs.
+- **Reads and writes, but no outage** (`C:H/I:H/A:N`): the holder can see and change whatever the granting user can, across every base that user touches. It does not knock the service over; it quietly walks around inside it.
+
+The concrete trust that breaks is the consent screen itself. A user installs some integration, reads the little list, approves a narrow slice, and reasonably believes that slice is the whole of what they gave away. In fact, that integration (or anyone who later gets hold of the token it was issued) can present the token to NocoDB's own API and act as the user in full. The scope was theater. And because the enterprise exchange upgrades the token into a refreshable session, revoking the app afterward does not necessarily close the door that was already propped open behind it.
+
+## The fix, and the lesson under it
+
+The remediation in **2026.10.1** is exactly as small as the root cause is subtle. Per the advisory, the session strategy, the SSO-to-session exchange, and the socket handshake now **refuse OAuth access tokens** outright. The exchange, specifically, now accepts only tokens minted for single sign-on (the thing it was always supposed to take) and nothing else. Three doors, each finally taught to read the tag on the key before turning the lock.
+
+If you run NocoDB, the action is boring and complete: upgrade to `2026.10.1` or later. There is no configuration toggle that stands in for it, because the issue was never configuration; it was two token families sharing one identity.
+
+The longer lesson is the one worth carrying to your own systems, because this shape appears the moment you have more than one kind of token. If two tokens are allowed to do different things, the verifier has to be able to tell them apart, and "signed by us" is not telling them apart: it is the one thing they have in common.
+
+> [!TIP]
+> **If you build auth, the durable fixes are the unglamorous ones:**
+>
+> - Sign different audiences with different keys, so a token for one purpose cannot even be verified by the door for another.
+> - Or stamp an explicit `typ` / `aud` claim into every token, and make _every_ entry point check it and reject on mismatch. Fail closed: an unrecognized type is a `401`, never a shrug.
+> - Add the regression test that pins it: mint an access token, present it to a session route, and assert it is rejected before any user is loaded.
+
+NocoDB took the direct route and taught each door to say no. The principle underneath is that authenticity and authorization are different questions, and a token that answers the first beautifully can still be the wrong answer to the second.
+
+## Disclosure
+
+This was reported to NocoDB through coordinated disclosure, and the advisory (GHSA-xmfr-pc8j-4xh5) credits several researchers, ourselves among them, who converged on the same class of issue. NocoDB triaged it, confirmed it, and shipped the fix in 2026.10.1, with the session strategy, the exchange, and the socket handshake all updated together. No CVE was assigned at the time of writing; the GHSA ID is the thing to track.
+
+It is a clean example of the kind of bug we keep finding interesting: not a crash, not a forgotten `if`, but a quiet decision made early (_sign everything with one key_) whose consequences only surface three files away, at a door that was only ever taught to ask whether the key was real.
+
+---
+
+_Want a read like this against your own auth stack? Book an engagement at [shellvoide.com/book](https://shellvoide.com/book), or reach us at [info@shellvoide.com](mailto:info@shellvoide.com)._
