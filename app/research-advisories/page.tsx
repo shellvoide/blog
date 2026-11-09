@@ -20,7 +20,7 @@ const advisories: Advisory[] = [
   {
     name: 'SQLParse',
     ecosystem: 'PyPI',
-    writeup: '',
+    writeup: '/sqlparse-redos-php-code-injection',
     cves: [
       {
         id: 'CVE-2026-112307',

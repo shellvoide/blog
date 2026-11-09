@@ -1,0 +1,488 @@
+---
+title: 'Unclosed Quotes Burn CPU, Unescaped Dollars Run PHP: ReDoS and Code Injection in sqlparse'
+summary: "sqlparse's formatter had two bugs that both turn on quotation marks. Its newline splitter used a regular expression that, for every quote that never closed, read to the end of the input and back, so 16 KB of backslash-quote pairs could cost seconds of CPU (CWE-1333). Its PHP output filter escaped backslashes and double quotes but not the dollar sign, so SQL text became live PHP interpolation inside the generated snippet (CWE-94). Both are fixed in 0.6.1, the project's final release; tracked as GHSA-3r5h-5jcg-gmgg and GHSA-xmww-55xg-h3vc (CVE-2026-112307)."
+date: '2026-11-09'
+lastmod: '2026-11-09'
+authors: ['appsec-research']
+category: 'research-advisories'
+tags:
+  [
+    'sqlparse',
+    'redos',
+    'code-injection',
+    'python',
+    'php',
+    'denial-of-service',
+    'output-encoding',
+    'cwe-1333',
+    'cwe-94',
+    'vulnerability-research',
+    'case-study',
+    'disclosure',
+    'appsec',
+  ]
+draft: false
+layout: PostSimple
+canonicalUrl: 'https://shellvoide.com/blog/sqlparse-redos-php-code-injection'
+---
+
+> [!NOTE]
+> **GHSA-3r5h-5jcg-gmgg** · sqlparse · CWE-1333 (Inefficient Regular Expression Complexity) · Severity High (no CVSS vector published) · No CVE assigned at the time of writing
+>
+> **GHSA-xmww-55xg-h3vc / CVE-2026-112307** · sqlparse · CWE-94 (Improper Control of Generation of Code) · CVSS 4.0 score 6.2 (Medium)
+>
+> Affected: `<= 0.6.0` · Fixed: **0.6.1** (both) · Reported through coordinated disclosure; both fixes shipped in 0.6.1 and both advisories were published on 1 November 2026. 0.6.1 is the project's final release.
+
+Give a manuscript to a good copy editor and watch what happens to the quotation marks. Every one gets tracked: where it opens, where it closes, whether a line break falls inside it or outside. Underneath all that tracking sits a rule so old that nobody bothers to say it. Words inside quotation marks are carried, not spoken. A newspaper that quotes a threat has not made one.
+
+sqlparse is a copy editor for SQL, and it leaned on that rule in two places. While reading, it went hunting for the end of every quotation, including quotations that never end. While writing, it set your SQL inside a pair of PHP quotation marks and trusted them to keep it quiet. PHP's double quotes never made that promise in full.
+
+This is the story of both bugs, and of a careful, symmetrical fix that was written for one reader and shipped to two.
+
+Our way into sqlparse was a detour. We were partway through a dependency review on another engagement, working down a Python lockfile one package at a time, and sqlparse was on it the way it is on every Django project: pulled in by something bigger and rarely thought about. Its August advisory, GHSA-3496-9g83-7v6x, earned it more than a glance. A well-placed backslash had let SQL slip out of the Python and PHP snippets the formatter can generate, and the fix applied the same two escapes to both languages, line for line. We read security patches less for what they fix than for what they assume, and the neatness of this one itched. Python and PHP do not read a quoted string the same way. Did the patch know that? And while we were in the package anyway, how carefully did it read quotes on the way _in_?
+
+The work split along those two questions. One researcher sat with `filters/output.py` on one half of the screen and PHP's documentation for double-quoted strings on the other, going character by character through what each language still treats as live inside its quotes. Meanwhile KLUE, our automation, went wide: every regular expression in the package, every call site that feeds one, and how each one's running time grows when the input is shaped to make it work. Breadth like that is what tooling is for, and it surfaced one split whose cost climbed far faster than its input. Explaining _why_, and spotting the single character the August fix never listed, took people reading slowly. Both answers turned out to sit on the same punctuation mark, which is where the rest of this post lives.
+
+## A one-minute primer on quotation marks
+
+Developers can jump to the next heading. Everyone else gets the one idea both bugs are built on, and it is an idea every copy editor already works by.
+
+Programs handle a lot of text they are meant to repeat rather than obey, like a customer's name or a line of SQL. To mark text as quoted rather than spoken, a language wraps it in quotation marks and calls the result a **string**. Whatever sits between the marks is supposed to be inert: the program can store it and pass it along, and none of it is mistaken for an instruction. It is the copy editor's rule from the top of this post, written into a grammar.
+
+Two complications make that harder than it sounds. First, sometimes the quoted text itself contains a quotation mark, so languages let you **escape** it: put a backslash in front, and `\"` means "a literal quote, keep going" rather than "the string ends here." Second, and this is the one that matters, **every language decides for itself which characters are still live inside its quotes**. Inside a Python single-quoted string, the only troublemakers are the quote, the backslash and a raw newline. Inside a PHP double-quoted string there is one more: the dollar sign. In PHP, `"Hello $name"` does not print the word `$name`. It looks up the variable called `name` and splices its value in. Wrap it in curly braces, as in `{$expr}`, and PHP goes further and evaluates an expression.
+
+So a quotation mark is not one promise. It is a different promise in every language, and code that writes strings for another language has to keep _that_ language's promise, not its own.
+
+## The first job: finding the line breaks
+
+Every call to `sqlparse.format()` ends the same way, whatever options you pass. After the formatting filters have run, a serializer turns the statement back into text and tidies its line endings. To do that it has to split on newlines without splitting a quoted string that happens to contain one:
+
+```python {6} showLineNumbers
+# sqlparse/__init__.py and sqlparse/filters/others.py at 0.6.0  (lightly trimmed)
+def format(sql, encoding=None, **options):
+    stack = engine.FilterStack()
+    options = formatter.validate_options(options)
+    stack = formatter.build_filter_stack(stack, options)
+    stack.postprocess.append(filters.SerializerUnicode())   # ← unconditional
+    return "".join(stack.run(sql, encoding))
+
+
+class SerializerUnicode:
+    @staticmethod
+    def process(stmt):
+        lines = split_unquoted_newlines(stmt)
+        return '\n'.join(line.rstrip() for line in lines)
+```
+
+The highlighted line is not behind any option. Ask for upper-case keywords or ask for nothing at all: the serializer runs, and so does `split_unquoted_newlines()`. That function is where the copy editor reads for quotation marks, and in 0.6.0 it handed the whole job to a single regular expression:
+
+```python {7-8,16} showLineNumbers
+# sqlparse/utils.py at 0.6.0  (lightly trimmed)
+SPLIT_REGEX = re.compile(r"""
+(
+ (?:                     # Start of non-capturing group
+  (?:\r\n|\r|\n)      |  # Match any single newline, or
+  [^\r\n'"]+          |  # Match any character series without quotes or newlines, or
+  "(?:[^"\\]|\\.)*"   |  # Match double-quoted strings, or
+  '(?:[^'\\]|\\.)*'      # Match single quoted strings
+ )
+)
+""", re.VERBOSE)
+
+
+def split_unquoted_newlines(stmt):
+    text = str(stmt)
+    lines = SPLIT_REGEX.split(text)
+    outputlines = ['']
+    for line in lines:
+        if not line:
+            continue
+        elif LINE_MATCH.match(line):
+            outputlines.append('')
+        else:
+            outputlines[-1] += line
+    return outputlines
+```
+
+The pattern is a short menu of the chunks it is willing to recognise: a newline, a run of ordinary characters with no quotes or newlines in it, a complete double-quoted string, or a complete single-quoted string. The two highlighted alternatives are the string rules. Open a quote, then take any number of characters that are either "not a quote and not a backslash" or "a backslash followed by anything," then close the quote. `re.split()` walks the text and cuts it at every chunk it recognises.
+
+Nothing here is wrong in the way a reviewer usually looks for. The string rule handles escaped quotes correctly. It does not stack a quantifier inside a quantifier, which is the shape most regex warnings are tuned to catch. On normal SQL it is fast. The trouble only starts when a quotation opens and never closes.
+
+> [!TIP]
+> **In plain terms.** The copy editor reads the page in pieces it can name: a line break, a stretch of plain words, or a complete quotation from its opening mark to its closing mark. A quotation only counts if it closes. That rule is fair. What it costs when it fails is the next section.
+
+## The quotation that never closes
+
+Now set the double-quoted string rule against the shape the advisory describes: `SELECT`, then a backslash and a double quote, over and over.
+
+```text
+the rule:    "(?:[^"\\]|\\.)*"
+the input:   SELECT \"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\" ...
+```
+
+Walk it the way the regex engine does.
+
+At the first backslash, the plain-text rule matches one character and stops, because the next character is a quote. At that quote, the double-quoted-string rule wakes up. It opens a quotation and starts consuming the inside, and every `\"` pair that follows is, by the rule's own logic, an escaped quote: legal content, keep going. So it keeps going, all the way to the end of the input. There it needs a closing quote and finds nothing. A regex engine does not give up at the first dead end. It backs off one step at a time, looking for any earlier point where the string could have closed. There is none, because every quote in the input is escaped. Only after walking all the way back does the rule admit defeat at this position.
+
+`re.split()` then does what it always does after a failed attempt: it moves one character to the right and tries again. That character is the next backslash (plain text, fine). The one after it is the next quote, which opens a new quotation and makes the same trip to the end and back.
+
+```text
+SELECT \"\"\"\"\"\"\"\" ... \"
+        ^ opens, reads to the end, finds no close, backs off, fails
+          ^ opens, reads to the end, finds no close, backs off, fails
+            ^ opens, reads to the end ...
+```
+
+Each of the N quotes pays for a trip proportional to the distance left, and those distances add up to roughly N² / 2 steps. Double the payload and you quadruple the work. Sixteen kilobytes are enough to measure in seconds, and the payload is two printable characters, repeated.
+
+> [!TIP]
+> **In plain terms.** Picture the copy editor meeting an opening quotation mark on page one, reading to the last page for its partner, not finding it, and turning back one page at a time to be sure. Then moving on by a single word, meeting another opening mark, and doing it all again. A manuscript with a thousand unclosed quotes means a thousand trips to the back of the book. No single trip is the problem. Taking it again from every quote is.
+
+## The second job: dictation into PHP
+
+sqlparse has a lesser-known trick. Pass `output_format='php'` to `format()`, or `-l php` to the `sqlformat` command, and instead of formatted SQL you get a ready-to-paste PHP assignment with your SQL inside a string. This is the copy editor taking dictation: your words, set in quotation marks, handed to a different reader. Here is the filter that writes it:
+
+```python {10,21} showLineNumbers
+# sqlparse/filters/output.py at 0.6.0  (lightly trimmed)
+class OutputPHPFilter(OutputFilter):
+    varname_prefix = '$'
+
+    def _process(self, stream, varname, has_nl):
+        yield sql.Token(T.Name, varname)
+        yield sql.Token(T.Whitespace, ' ')
+        yield sql.Token(T.Operator, '=')
+        yield sql.Token(T.Whitespace, ' ')
+        yield sql.Token(T.Text, '"')            # ← opens a double-quoted PHP string
+
+        for token in stream:
+            if token.is_whitespace and '\n' in token.value:
+                ...                             # close this line's string, open the next
+                continue
+
+            # Escape backslashes before quotes so a backslash preceding a
+            # quote cannot break out of the generated string literal
+            # (GHSA-3496-9g83-7v6x).
+            else:
+                token.value = token.value.replace('\\', '\\\\').replace('"', '\\"')
+
+            yield sql.Token(T.Text, token.value)
+
+        yield sql.Token(T.Text, '"')
+        yield sql.Token(T.Punctuation, ';')
+```
+
+The first highlighted line opens a **double-quoted** PHP string. The second is the only thing standing between your SQL and PHP's parser, and it does two things: it doubles every backslash, then puts a backslash in front of every double quote. That is exactly the escape you need to stop SQL from _closing_ the string. It says nothing about the dollar sign, because a dollar sign cannot close a string. Inside PHP's double quotes, it does not need to.
+
+Feed the same harmless statement to both output modes and the difference is plain:
+
+```text
+SQL in:   SELECT * FROM t WHERE owner = '$probe'
+
+python:   sql = 'SELECT * FROM t WHERE owner = \'$probe\''
+php:      $sql = "SELECT * FROM t WHERE owner = '$probe'";
+```
+
+To Python, `$probe` inside single quotes is six characters of text. To PHP, `$probe` inside double quotes is an instruction: fetch the variable called `probe` from wherever this line ends up running, and paste its value here. Add curly braces and PHP evaluates an expression instead of reading a variable, which is how the advisory's authors got from this one line to running commands on the host. At no point does the SQL author close the string or play games with backslashes. The injected text runs _inside_ the string, so every defence built around keeping the string closed stays perfectly satisfied while it happens.
+
+> [!TIP]
+> **In plain terms.** Python reads a quotation the way a newsreader does: word for word, nothing acted out. PHP reads double-quoted text the way an actor reads a script. Most of it is recited, but anything that starts with a dollar sign is a stage direction, and stage directions get carried out.
+
+## A fix written for one reader
+
+How does a filter whose whole job is escaping miss a character? The comment on the escape line tells you. It was written in August for GHSA-3496-9g83-7v6x (CVE-2026-59894), where a backslash placed in front of a quote could neutralise the escape and break out of the generated string. That fix was correct, and it was applied to both output filters, side by side:
+
+```python
+# sqlparse/filters/output.py at 0.6.0, both filters
+
+# OutputPythonFilter: the SQL goes inside '...'
+token.value = token.value.replace('\\', '\\\\').replace("'", "\\'")
+
+# OutputPHPFilter: the SQL goes inside "..."
+token.value = token.value.replace('\\', '\\\\').replace('"', '\\"')
+```
+
+Next to each other, the two lines are pleasingly symmetrical: escape the backslash, then escape the quote. For Python's single quotes, that is enough: an ordinary Python string does no interpolation, so once the quote and the backslash are handled, nothing inside can turn back into code. For PHP's double quotes it is one character short. The languages are not symmetrical, so the symmetrical fix was right for one reader and nearly right for the other.
+
+As the advisory points out, the attacker never needs to leave the string. That is what makes this bug feel unfair. The August fix was built to stop breakouts, and here there is no breakout. The generated PHP is syntactically perfect. It just says more than the person who wrote the SQL was ever supposed to be able to say.
+
+> [!TIP]
+> **In plain terms.** The August fix taught the copy editor to stop anyone slipping an extra closing quotation mark into dictated text. That was the whole lesson Python needed. PHP needed one more: inside its double quotes, a dollar sign is never just a dollar sign, and nobody had told the copy editor.
+
+## Every way in, and what each one buys
+
+Two bugs, a handful of entry points, and a couple that look as if they belong on the list but do not.
+
+**`sqlparse.format()`, with any options at all.** The serializer is appended unconditionally, so every format call runs the slow split. What the attacker gets is CPU time: one request of the right shape can pin a worker for seconds at a few tens of kilobytes.
+
+**The `sqlformat` command, and `python -m sqlparse`, reading a file or stdin.** Same path, same cost. A CI job or log pipeline that pretty-prints SQL files can be stalled by a single file.
+
+**`format(sql, output_format='php')` and `sqlformat -l php`.** These reach the PHP filter. Nothing happens at format time; the payload waits quietly in the generated snippet. Whoever later runs that snippet runs the attacker's PHP expression with the PHP process's permissions. Even without an expression payload, a bare `$name` pulls a variable from the surrounding scope into the SQL text when the snippet runs. The advisory demonstrates exactly that, with a secret from the calling code spliced into the query.
+
+**Not reachable.** `sqlparse.parse()` and `sqlparse.split()` never run the serializer, so they never touch the slow split. And the dollar sign means nothing to `output_format='python'`; the maintainers added a regression test that pins that down.
+
+## Proof of concept
+
+Both bugs can be proved without touching anyone else's system. Part one lifts the vulnerable lines verbatim out of the 0.6.0 source and runs them on their own, with nothing to install and no PHP required, so each defect shows up within a couple of seconds. Part two repeats the experiment through the real `sqlformat` command, inside throwaway environments on a machine you control.
+
+### Part one: the vulnerable lines, lifted out and run
+
+**The split.** The claim is narrow: _the 0.6.0 split regex costs time quadratic in the number of unclosed quotes, and closing the quotation removes the cost._ The script below copies `SPLIT_REGEX` byte for byte from `sqlparse/utils.py` at 0.6.0 and times it on two inputs that differ by exactly one character: the payload, and the payload with a single closing quote on the end.
+
+```python {26-27} showLineNumbers
+# poc_split.py  ·  python3 poc_split.py  ·  no dependencies
+import re
+import time
+
+# SPLIT_REGEX, verbatim from sqlparse/utils.py at 0.6.0
+SPLIT_REGEX = re.compile(r"""
+(
+ (?:                     # Start of non-capturing group
+  (?:\r\n|\r|\n)      |  # Match any single newline, or
+  [^\r\n'"]+          |  # Match any character series without quotes or
+                         # newlines, or
+  "(?:[^"\\]|\\.)*"   |  # Match double-quoted strings, or
+  '(?:[^'\\]|\\.)*'      # Match single quoted strings
+ )
+)
+""", re.VERBOSE)
+
+
+def seconds(text):
+    start = time.perf_counter()
+    SPLIT_REGEX.split(text)
+    return time.perf_counter() - start
+
+
+for pairs in (1000, 2000, 4000, 8000):
+    unclosed = 'SELECT ' + '\\"' * pairs   # backslash-quote, repeated
+    closed = unclosed + '"'                # the same, plus one closing quote
+    print(f'{len(unclosed):>6} bytes   '
+          f'closed {seconds(closed):.4f}s   '
+          f'unclosed {seconds(unclosed):.4f}s')
+```
+
+On our machine (Python 3.13), it prints:
+
+```text
+  2007 bytes   closed 0.0002s   unclosed 0.0182s
+  4007 bytes   closed 0.0002s   unclosed 0.0676s
+  8007 bytes   closed 0.0003s   unclosed 0.2722s
+ 16007 bytes   closed 0.0009s   unclosed 2.6363s
+```
+
+Read down the right-hand column. Each time the input doubles, the time roughly quadruples (3.7 times, then 4.0, and steeper still on the last step), which is the fingerprint of quadratic work. Now read across. The closed column stays under a millisecond the whole way, and at 16 KB the gap is about 2,900 times. The only difference between the two inputs is the closing quote added on the second highlighted line: give the copy editor a closing mark to find and there is nothing to search for. The 8 KB row lines up with the advisory's own measurement of a quarter of a second of CPU for its 8,000-byte payload. Your numbers will differ in scale. They will not differ in shape.
+
+**The PHP filter.** The claim here is just as narrow: _0.6.0 escapes backslashes and double quotes but passes a dollar sign through untouched, and 0.6.1 escapes it._ The script reproduces the per-token escape from each release verbatim, and runs two inputs through both: the August backslash case as a control, and a statement holding a harmless variable name.
+
+```python {11,16} showLineNumbers
+# poc_php.py  ·  python3 poc_php.py  ·  no dependencies
+# The per-token escape in OutputPHPFilter, verbatim from each release.
+
+def escape_060(value):
+    return value.replace('\\', '\\\\').replace('"', '\\"')
+
+
+def escape_061(value):
+    return (value.replace('\\', '\\\\')
+                 .replace('"', '\\"')
+                 .replace('$', '\\$'))
+
+
+inputs = [
+    r"SELECT '\' , 1",                          # the August backslash case
+    "SELECT * FROM t WHERE owner = '$probe'",  # a harmless PHP variable name
+]
+
+for sql in inputs:
+    print('SQL in:', sql)
+    for release, escape in (('0.6.0', escape_060), ('0.6.1', escape_061)):
+        print(f'  {release}  $sql = "{escape(sql)}";')
+```
+
+It prints:
+
+```text
+SQL in: SELECT '\' , 1
+  0.6.0  $sql = "SELECT '\\' , 1";
+  0.6.1  $sql = "SELECT '\\' , 1";
+SQL in: SELECT * FROM t WHERE owner = '$probe'
+  0.6.0  $sql = "SELECT * FROM t WHERE owner = '$probe'";
+  0.6.1  $sql = "SELECT * FROM t WHERE owner = '\$probe'";
+```
+
+The first pair is the control, and both releases pass it: the backslash is doubled and the string stays shut. The August fix holds, so this is not a regression of it. The second pair is the bug. 0.6.0 hands `$probe` to a double-quoted PHP string untouched, and 0.6.1 writes `\$probe`, PHP's documented escape for a literal dollar sign. (Applying the escape to the whole statement at once gives the same result as the filter applying it token by token, because every replacement works on single characters.) Between the two releases, the only change is the highlighted third replacement, and it is exactly the character in question.
+
+### Part two: the real package, on a machine you control
+
+Put each release in its own throwaway virtual environment:
+
+```bash
+python3 -m venv old && old/bin/pip install -q sqlparse==0.6.0
+```
+
+```bash
+python3 -m venv new && new/bin/pip install -q sqlparse==0.6.1
+```
+
+These paths are for Linux and macOS. On Windows the tools live under `old\Scripts` and `new\Scripts`, and the `time` commands below need a POSIX shell such as Git Bash.
+
+**The split, through the CLI.** Write the payload and its one-character control to files, then time `sqlformat` on each:
+
+```bash
+python3 -c 'open("unclosed.sql", "w").write("SELECT " + "\\\"" * 8000)'
+```
+
+```bash
+python3 -c 'open("closed.sql", "w").write("SELECT " + "\\\"" * 8000 + "\"")'
+```
+
+```bash
+time old/bin/sqlformat unclosed.sql > /dev/null
+```
+
+```bash
+time old/bin/sqlformat closed.sql > /dev/null
+```
+
+```bash
+time new/bin/sqlformat unclosed.sql > /dev/null
+```
+
+The file holds 8,000 pairs, the same 16 KB as the last row of part one. On 0.6.0 the first command should therefore take at least as long as the split alone took there (2.6 seconds on our machine), since the split is only one stage of `format()`. The control, and the same file on 0.6.1, come back in roughly the time it takes Python to start. We have not printed a stopwatch reading for the CLI itself, because that figure depends on your hardware. The maintainers' own regression test is a fair second yardstick: it formats a 40 KB payload of the same shape, notes that the old code took several seconds on it, and asserts that 0.6.1 finishes in under one.
+
+**The PHP filter, through the CLI.** Write the harmless statement to a file and generate a PHP snippet with each release:
+
+```bash
+printf '%s' "SELECT * FROM t WHERE owner = '\$probe'" > probe.sql
+```
+
+```bash
+old/bin/sqlformat -l php probe.sql
+```
+
+```bash
+new/bin/sqlformat -l php probe.sql
+```
+
+```text
+$sql = "SELECT * FROM t WHERE owner = '$probe'";
+$sql = "SELECT * FROM t WHERE owner = '\$probe'";
+```
+
+The second line has the same form the project's regression tests pin for 0.6.1. To see what the first line means to PHP, here is what the language does with it. This is PHP's documented interpolation behaviour, shown with a harmless variable (illustrative; we did not need a PHP runtime to make the point):
+
+```php
+<?php
+// What PHP does with the 0.6.0 line, using a harmless variable
+$probe = 'value-from-the-calling-scope';
+$sql = "SELECT * FROM t WHERE owner = '$probe'";
+echo $sql, PHP_EOL;
+// SELECT * FROM t WHERE owner = 'value-from-the-calling-scope'
+```
+
+Run the 0.6.1 line in the same script and it prints `'$probe'` literally. That one-character diff is the control: the same SQL, the same PHP, and the only variable is whether the dollar sign was escaped. The variable read is where we stop, on purpose. The same opening admits PHP's curly-brace expression syntax, and the advisory's authors confirmed that it reaches command execution on PHP 8.1 and 8.4. We are not reproducing that payload. The variable read already proves the copy editor is passing stage directions to the actor, and we would rather not write anyone's script for them.
+
+> [!WARNING]
+> Run this only on machines and in environments you own, and against the throwaway virtual environments above, not a shared or production install. If anything you care about formats SQL it did not write, or generates PHP from it, upgrade to `0.6.1` before you experiment.
+
+## Why scanners and quick review slide past both
+
+**The regex.** Regex linters mostly look for one famous shape: a quantifier nested inside another, like `(a+)+`, which can blow up within a single match attempt. `SPLIT_REGEX` has none. Each string rule is linear for any one attempt. The quadratic cost does not live in the pattern. It lives in the _call_, because `re.split()` retries from every position, and in the _input_, because the input has to be full of quotes that never close. A linter reading the pattern sees nothing wrong. A scanner or fuzzer with an ordinary timeout sees a quarter of a second on 8 KB, a slow but successful response, and moves on. The bug only shows itself when someone plots time against size and notices that the line is curving.
+
+**The PHP filter.** A taint tracker follows input to output and asks whether it passed through a sanitiser on the way. Here it did: there is a replace chain right before the write, so the flow gets marked clean. Seeing the bug requires knowing that the sanitiser's alphabet belongs to the wrong language, which means modelling PHP's double-quote grammar at a sink that sits inside a Python program. The output is a string that only becomes code later, in another process and another language, possibly days afterwards. No single-language analysis is standing where the harm happens.
+
+**The human.** The August fix looked complete _because_ it was symmetrical. Two filters, two identical-looking lines, the same comment above each. Symmetry reads as thoroughness. Catching this means setting the two lines aside and asking a different question about each: not "is this the same as the other one?" but "what does _this_ reader treat as live?" For PHP, the answer is one of the first things its documentation says about double-quoted strings.
+
+## The blast radius, in plain terms
+
+**The ReDoS.** The advisory rates it High but does not publish a CVSS vector, and we are not going to invent one. In plain terms: it is availability only. Nothing is read or changed, and the process does not crash; it just spends its CPU going back and forth through quotes. It is reachable over a network only if your service hands text it did not write to `format()`. Each such request can hold a worker for seconds at a few tens of kilobytes, and the advisory's extrapolation puts a 256 KB body at minutes of CPU. The people who should care are web-based SQL formatters, query consoles that pretty-print user SQL, log and APM pipelines that format captured queries, and bots that format contributor SQL in CI. If you only use `parse()` or `split()`, you are not exposed. A stock Django app is not exposed either: Django depends on sqlparse, but it calls `format()` only when it prepares SQL scripts the developer wrote, such as migrations, not text from strangers.
+
+**The PHP injection.** The CVSS 4.0 vector is `AV:L/AC:L/AT:N/PR:N/UI:P/VC:N/VI:N/VA:N/SC:H/SI:H/SA:L`, score 6.2. Out of the jargon:
+
+- **Local attack vector, low complexity, no special conditions** (`AV:L/AC:L/AT:N`): the payload arrives as input to a formatting run (a file, stdin, a library call), not through a network listener in sqlparse itself.
+- **No privileges, passive interaction** (`PR:N/UI:P`): the attacker only needs their SQL in front of the formatter. Someone then has to run the generated snippet, which is what generated snippets are for.
+- **The vulnerable system is untouched** (`VC:N/VI:N/VA:N`): sqlparse runs normally and returns a string. The copy editor is never in danger.
+- **The subsequent system takes the hit** (`SC:H/SI:H/SA:L`): the PHP process that executes the snippet suffers high confidentiality and integrity impact, and low availability impact.
+
+That last split is CVSS 4.0 describing this bug almost exactly. The formatter is fine. The reader who acts on its output is the one who gets hurt. In practice, that means tools that turn SQL into PHP for someone else: code generators, editor plugins, "SQL to PHP" converters and scaffolding scripts, wherever the SQL comes from one person and the resulting PHP is run by another. If you never use the PHP output mode, you are not affected. If you only ever generated snippets from your own SQL, the worst case is a correctness bug, where a dollar sign in your query quietly became a variable read.
+
+## The fix, and the lesson under it
+
+**The split** was rewritten by the maintainer as a plain, linear scanner. It no longer asks a regular expression to find whole quotations; it walks the text once and remembers one crucial fact:
+
+```python {12,20,25} showLineNumbers
+# sqlparse/utils.py at 0.6.1  (docstring trimmed)
+def split_unquoted_newlines(stmt):
+    text = str(stmt)
+    length = len(text)
+    lines = []
+    line_start = pos = 0
+    # Searching the end of a string that is never closed scans up to some
+    # position. Every later quote of the same kind before that position
+    # can't be closed either, so remember it instead of scanning again.
+    # Otherwise many unclosed quotes take quadratic time
+    # (GHSA-3r5h-5jcg-gmgg).
+    unclosed_before = {'"': 0, "'": 0}
+    while pos < length:
+        char = text[pos]
+        if char in '\r\n':
+            lines.append(text[line_start:pos])
+            pos += 2 if text.startswith('\r\n', pos) else 1
+            line_start = pos
+        elif char in unclosed_before:
+            if pos >= unclosed_before[char]:
+                end = _STRING_CONTENT[char].match(text, pos + 1).end()
+                if end < length and text[end] == char:
+                    pos = end + 1
+                    continue
+                unclosed_before[char] = end
+            pos += 1
+        else:
+            pos = _UNQUOTED_TEXT.match(text, pos).end()
+    lines.append(text[line_start:])
+    return lines
+```
+
+The highlighted lines are the whole idea. When a search for a closing quote fails, the scanner writes down how far that search got. Any later quote of the same kind that sits before that point cannot close either, so it is treated as plain text and never searched again. In the copy editor's terms: after one trip to the back of the book, you put a bookmark where the trip ended and stop making it. Each character is now looked at a bounded number of times, and the cost is linear.
+
+**The PHP filter** got the one-line fix the advisory suggested, contributed through a pull request credited to cve-zh00:
+
+```python
+# sqlparse/filters/output.py at 0.6.1
+token.value = (token.value.replace('\\', '\\\\')
+                          .replace('"', '\\"')
+                          .replace('$', '\\$'))
+```
+
+The order matters. The dollar sign is escaped _last_, so the backslash it gains is not doubled again by the first replacement. The commit adds regression tests for variables, for both expression forms, for PostgreSQL dollar-quoted strings, for quoted identifiers and comments, and for a dollar sign that already has a backslash in front of it.
+
+If you depend on sqlparse, the action is to upgrade to **0.6.1**. There is no configuration switch that stands in for it. Then take the second half of the news seriously: the maintainer has said 0.6.1 is the final release and that no further releases are planned, security fixes included. If a library that sees untrusted SQL in your stack is now finished software, that is a decision to make on purpose rather than discover during the next advisory.
+
+The lesson under both bugs is the same one, seen from two sides. Whether you are reading a quotation or writing one, the rules belong to the language on the other end, not to the code in front of you.
+
+> [!TIP]
+> **If you write code that reads or emits quoted text:**
+>
+> - Escape for the reader, not the writer. List what the _target_ language treats as live inside its quotes, and escape all of it. Better still, choose a quoting form with nothing live inside: PHP's single-quoted strings do not interpolate at all, which is the structural fix the advisory also proposed.
+> - Treat one fix copied across two output languages as a prompt to check each language separately, not as proof that both are done.
+> - For any regex driven by `split`, `search` or `findall`, test inputs where a match can fail late, and plot time against input size. If the curve bends, replace the regex with a scanner that remembers what it has already ruled out.
+> - If you format untrusted SQL at all, cap the input size and give the work a time budget.
+
+## Disclosure
+
+Both issues were reported privately through GitHub's security advisory process. Both fixes shipped in 0.6.1, and the maintainer, Andi Albrecht, published both advisories alongside it on 1 November 2026.
+
+The credits are shared, and we want them right. GHSA-3r5h-5jcg-gmgg credits our researcher (president-xd) as finder, with eros938 and hash3liZer credited for analysis; the 0.6.1 changelog also credits LinFeng-1219 with discovering it. GHSA-xmww-55xg-h3vc credits iRevivalx as reporter; Gares95, manus-pi, president-xd and Tan-JunWei as finders; hash3liZer and eros938 for analysis; and cve-zh00 as the remediation developer whose pull request became the fix. The changelog also lists arpitjain099 among those who discovered it. Several people, ourselves among them, arrived at the same missing character. The linear scanner was written by the maintainer.
+
+- **10 August 2026:** GHSA-3496-9g83-7v6x (CVE-2026-59894) published; the backslash fix ships in 0.6.0 on 13 August.
+- **20 October 2026:** the dollar-sign escape is committed.
+- **1 November 2026:** the linear newline scanner is committed, 0.6.1 is released, and both advisories are published.
+- **CVE status:** CVE-2026-112307 for the PHP injection. No CVE had been assigned to the ReDoS at the time of writing; the GHSA ID is the one to track.
+
+There is a harder part of this story, and we would rather say it plainly than leave it out. The release that fixed these two bugs is also sqlparse's last. In the changelog, the maintainer explains that the growing volume of security reports, particularly reports produced through automated vulnerability research, made the work unsustainable for one volunteer. We were part of that volume. Our ReDoS report came with measurements and a suggested fix. On the PHP bug we were one finder among several, which means the same defect reached one person from several directions at once. Both things are true together. The bugs needed fixing, and every report, however careful, costs an evening of somebody's unpaid time. Anyone pointing automation at volunteer-run projects, us included, owes those projects deduplication, minimal reproductions and patches rather than suggestions wherever possible, and an honest sense of when a finding is worth a maintainer's night.
+
+Thank you, Andi, for more than fifteen years of sqlparse, and for fixing these two on the way out.
+
+---
+
+_Want a read like this against your own parsers and code generators? Book an engagement at [shellvoide.com/book](https://shellvoide.com/book), or reach us at [info@shellvoide.com](mailto:info@shellvoide.com)._
