@@ -18,6 +18,28 @@ type Advisory = {
 // Packages with an assigned CVE, from the Shellvoide disclosure log.
 const advisories: Advisory[] = [
   {
+    name: 'Composer',
+    ecosystem: 'PHP',
+    writeup: '/composer-lockfile-rce-token-leak-zip-slip',
+    cves: [
+      {
+        id: 'CVE pending',
+        desc: 'Arbitrary command execution via transport-options.prevent_url_access_callable loaded from composer.lock or installed.json, even with plugins and scripts disabled.',
+        advisory: 'https://github.com/composer/composer/security/advisories/GHSA-jhfp-4ppm-crmm',
+      },
+      {
+        id: 'CVE pending',
+        desc: 'Arbitrary file write outside the package directory via symlinked zip entries and the unzip to ZipArchive extraction fallback.',
+        advisory: 'https://github.com/composer/composer/security/advisories/GHSA-w6hj-6587-3jh5',
+      },
+      {
+        id: 'CVE pending',
+        desc: 'Inline repository HTTP credentials sent to attacker-controlled dist mirrors supplied in composer.lock or installed.json.',
+        advisory: 'https://github.com/composer/composer/security/advisories/GHSA-x82q-x274-r6pq',
+      },
+    ],
+  },
+  {
     name: 'SQLParse',
     ecosystem: 'PyPI',
     writeup: '/sqlparse-redos-php-code-injection',
