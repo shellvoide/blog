@@ -17,7 +17,9 @@ const NavLinks = () => {
             href={link.href}
             target={external ? undefined : '_self'}
             className={`inline-flex items-center gap-1 text-sm font-medium whitespace-nowrap transition-colors ${
-              active ? 'text-primary-700' : 'hover:text-primary-600 text-gray-600'
+              active
+                ? 'text-primary-700 dark:text-primary-400'
+                : 'hover:text-primary-600 dark:hover:text-primary-400 text-gray-600 dark:text-gray-400'
             }`}
           >
             {link.title}

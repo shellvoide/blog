@@ -110,6 +110,10 @@ export const Blog = defineDocumentType(() => ({
     layout: { type: 'string' },
     bibliography: { type: 'string' },
     canonicalUrl: { type: 'string' },
+    // Optional advisory metadata, rendered as the table under a post's title: the affected
+    // system, and a list of { id, url, label, severity, score?, cve?, affected, fixed }
+    system: { type: 'string' },
+    advisories: { type: 'json' },
   },
   computedFields: {
     ...computedFields,

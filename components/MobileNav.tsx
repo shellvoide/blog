@@ -23,7 +23,7 @@ const MobileNav = () => {
       <button
         aria-label="Toggle Menu"
         onClick={() => setOpen(true)}
-        className="hover:text-primary-500 text-gray-900 sm:hidden"
+        className="hover:text-primary-500 text-gray-900 sm:hidden dark:text-gray-100"
       >
         <svg
           xmlns="http://www.w3.org/2000/svg"
@@ -47,11 +47,11 @@ const MobileNav = () => {
               onClick={() => setOpen(false)}
               className="absolute inset-0 h-full w-full cursor-default bg-black/25"
             />
-            <nav className="absolute inset-y-0 right-0 flex w-full max-w-xs flex-col bg-white px-8 py-6 shadow-xl">
+            <nav className="absolute inset-y-0 right-0 flex w-full max-w-xs flex-col bg-white px-8 py-6 shadow-xl dark:bg-gray-950">
               <button
                 aria-label="Close Menu"
                 onClick={() => setOpen(false)}
-                className="hover:text-primary-500 self-end text-gray-900"
+                className="hover:text-primary-500 self-end text-gray-900 dark:text-gray-100"
               >
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
@@ -73,7 +73,7 @@ const MobileNav = () => {
                     href={link.href}
                     target="_self"
                     onClick={() => setOpen(false)}
-                    className="hover:text-primary-600 py-2 text-xl font-bold tracking-tight text-gray-900"
+                    className="hover:text-primary-600 dark:hover:text-primary-400 py-2 text-xl font-bold tracking-tight text-gray-900 dark:text-gray-100"
                   >
                     {link.title}
                   </Link>

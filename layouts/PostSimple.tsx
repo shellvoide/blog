@@ -7,8 +7,10 @@ import Link from '@/components/Link'
 import Tag from '@/components/Tag'
 import PageTitle from '@/components/PageTitle'
 import SectionContainer from '@/components/SectionContainer'
+import AdvisoryTable, { type Advisory } from '@/components/AdvisoryTable'
 import siteMetadata from '@/data/siteMetadata'
 import ScrollTopAndComment from '@/components/ScrollTopAndComment'
+import PostProgress from '@/components/PostProgress'
 
 interface LayoutProps {
   content: CoreContent<Blog>
@@ -17,96 +19,126 @@ interface LayoutProps {
   prev?: { path: string; title: string }
 }
 
+function PostNavCard({
+  post,
+  direction,
+}: {
+  post: { path: string; title: string }
+  direction: 'prev' | 'next'
+}) {
+  const isNext = direction === 'next'
+  return (
+    <Link
+      href={`/${post.path}`}
+      aria-label={`${isNext ? 'Next' : 'Previous'} post: ${post.title}`}
+      className={`group hover:border-primary-300 dark:hover:border-primary-700 flex flex-col gap-1.5 rounded-2xl border border-gray-200 px-5 py-4 transition-colors dark:border-gray-800 ${
+        isNext ? 'sm:items-end sm:text-right' : ''
+      }`}
+    >
+      <span className="text-xs font-medium tracking-wide text-gray-500 dark:text-gray-400">
+        {isNext ? 'Next →' : '← Previous'}
+      </span>
+      <span className="group-hover:text-primary-700 dark:group-hover:text-primary-400 line-clamp-2 text-sm font-semibold text-gray-900 transition-colors dark:text-gray-100">
+        {post.title}
+      </span>
+    </Link>
+  )
+}
+
 export default function PostLayout({ content, next, prev, children }: LayoutProps) {
-  const { slug, date, title, tags } = content
+  const { slug, date, title, tags, category, readingTime, system } = content
+  const advisories = (content.advisories as Advisory[] | undefined) ?? []
+  const isAdvisory = category === 'research-advisories'
+  const back = isAdvisory
+    ? { href: '/research-advisories', label: 'Back to Advisories' }
+    : { href: '/', label: 'Back to all posts' }
+  const kicker = isAdvisory ? 'Security Advisory' : tags?.[0]?.split(' ').join('-')
+  const readTime = (readingTime as { text?: string } | undefined)?.text
+  const toc = (content.toc as { value: string; url: string; depth: number }[] | undefined) ?? []
 
   return (
     <SectionContainer>
       <ScrollTopAndComment />
-      <article className="relative pt-6 pb-10">
+      <article
+        className={`relative pt-6 pb-10 ${advisories.length > 0 ? 'has-advisory-table' : ''}`}
+      >
         <div
           aria-hidden
-          className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[24rem]"
-          style={{
-            backgroundImage:
-              'radial-gradient(var(--color-primary-200) 1px, transparent 1px), radial-gradient(var(--color-gray-200) 1px, transparent 1px)',
-            backgroundSize: '26px 26px, 26px 26px',
-            backgroundPosition: '0 0, 13px 13px',
-            WebkitMaskImage: 'radial-gradient(ellipse 78% 72% at 50% 0%, black, transparent 72%)',
-            maskImage: 'radial-gradient(ellipse 78% 72% at 50% 0%, black, transparent 72%)',
-          }}
+          className="post-hero-dots pointer-events-none absolute inset-x-0 top-0 -z-10 h-[26rem]"
         />
-        <header className="mx-auto max-w-3xl pt-4 pb-8 text-center sm:pt-8 sm:pb-10">
-          <div className="flex items-center justify-center gap-3 text-sm text-gray-500">
-            <time dateTime={date}>{formatDate(date, siteMetadata.locale)}</time>
-            {tags && tags.length > 0 && (
-              <>
-                <span className="text-gray-300">·</span>
-                <span className="text-primary-600 text-xs font-semibold tracking-wide uppercase">
-                  {tags[0].split(' ').join('-')}
+
+        {/* the tracker spans the whole post, from the back link to the last card */}
+        <div className="relative mx-auto max-w-3xl">
+          {toc.length > 0 && (
+            <aside className="absolute top-0 right-full mr-10 h-full w-44 pt-2 sm:pt-4 2xl:mr-24 2xl:w-56">
+              <PostProgress toc={toc} />
+            </aside>
+          )}
+
+          <header className="mx-auto max-w-3xl pt-2 pb-10 sm:pt-4">
+            <Link
+              href={back.href}
+              className="hover:border-primary-300 hover:text-primary-700 dark:hover:border-primary-700 dark:hover:text-primary-400 inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-white/70 px-3 py-1.5 text-sm font-medium text-gray-600 backdrop-blur transition-colors dark:border-gray-800 dark:bg-gray-950/60 dark:text-gray-400"
+            >
+              <span aria-hidden>&larr;</span>
+              {back.label}
+            </Link>
+
+            <div className="mt-8 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-sm text-gray-500 dark:text-gray-400">
+              {kicker && (
+                <span className="text-primary-600 dark:text-primary-400 text-xs font-semibold tracking-wider uppercase">
+                  {kicker}
                 </span>
-              </>
+              )}
+              {kicker && <span className="text-gray-300 dark:text-gray-600">&middot;</span>}
+              <time dateTime={date}>{formatDate(date, siteMetadata.locale)}</time>
+              {readTime && (
+                <>
+                  <span className="text-gray-300 dark:text-gray-600">&middot;</span>
+                  <span>{readTime}</span>
+                </>
+              )}
+            </div>
+
+            <div className="mt-4">
+              <PageTitle>{title}</PageTitle>
+            </div>
+
+            {advisories.length > 0 && (
+              <AdvisoryTable advisories={advisories} date={date} system={system} />
             )}
+          </header>
+
+          <div id="post-body" className="prose dark:prose-invert mx-auto max-w-3xl pb-4">
+            {children}
           </div>
-          <div className="mt-4">
-            <PageTitle>{title}</PageTitle>
-          </div>
-        </header>
 
-        <div className="prose mx-auto max-w-3xl pb-8">{children}</div>
+          <footer className="mx-auto mt-12 max-w-3xl space-y-8 border-t border-gray-200 pt-8 dark:border-gray-800">
+            {tags && tags.length > 0 && (
+              <div className="flex flex-wrap items-baseline gap-x-1 gap-y-2">
+                <span className="mr-3 text-xs font-medium tracking-wide text-gray-500 dark:text-gray-400">
+                  Tagged
+                </span>
+                {tags.map((tag) => (
+                  <Tag key={tag} text={tag} />
+                ))}
+              </div>
+            )}
 
-        {tags && tags.length > 0 && (
-          <div className="mx-auto max-w-3xl pt-2">
-            <div className="flex flex-wrap items-center gap-y-2">
-              {tags.map((tag) => (
-                <Tag key={tag} text={tag} />
-              ))}
+            {(prev?.path || next?.path) && (
+              <nav className="grid gap-3 sm:grid-cols-2">
+                <div>{prev?.path && <PostNavCard post={prev} direction="prev" />}</div>
+                <div>{next?.path && <PostNavCard post={next} direction="next" />}</div>
+              </nav>
+            )}
+          </footer>
+
+          {siteMetadata.comments && (
+            <div className="mx-auto mt-10 max-w-3xl text-gray-700 dark:text-gray-300" id="comment">
+              <Comments slug={slug} />
             </div>
-          </div>
-        )}
-
-        {(prev?.path || next?.path) && (
-          <nav className="mx-auto mt-10 flex max-w-3xl flex-col gap-4 text-sm font-medium sm:flex-row sm:justify-between sm:text-base">
-            <div>
-              {prev?.path && (
-                <Link
-                  href={`/${prev.path}`}
-                  className="text-primary-600 hover:text-primary-700 transition-colors"
-                  aria-label={`Previous post: ${prev.title}`}
-                >
-                  &larr; {prev.title}
-                </Link>
-              )}
-            </div>
-            <div className="sm:text-right">
-              {next?.path && (
-                <Link
-                  href={`/${next.path}`}
-                  className="text-primary-600 hover:text-primary-700 transition-colors"
-                  aria-label={`Next post: ${next.title}`}
-                >
-                  {next.title} &rarr;
-                </Link>
-              )}
-            </div>
-          </nav>
-        )}
-
-        <div className="mx-auto mt-12 max-w-3xl">
-          <Link
-            href="/"
-            className="hover:text-primary-600 text-sm font-medium text-gray-500 transition-colors"
-            aria-label="Back to all posts"
-          >
-            &larr; Back to all posts
-          </Link>
+          )}
         </div>
-
-        {siteMetadata.comments && (
-          <div className="mx-auto mt-10 max-w-3xl text-gray-700" id="comment">
-            <Comments slug={slug} />
-          </div>
-        )}
       </article>
     </SectionContainer>
   )

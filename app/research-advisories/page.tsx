@@ -215,14 +215,14 @@ export default function ResearchAdvisoriesPage() {
   return (
     <div className="pb-16">
       <div className="pt-6 pb-8">
-        <h1 className="text-3xl font-extrabold tracking-tight text-gray-900 sm:text-4xl">
+        <h1 className="text-3xl font-extrabold tracking-tight text-gray-900 sm:text-4xl dark:text-gray-100">
           Research &amp; Advisories
         </h1>
-        <p className="mt-4 max-w-2xl leading-7 text-gray-600">
+        <p className="mt-4 max-w-2xl leading-7 text-gray-600 dark:text-gray-400">
           Coordinated vulnerability disclosures from the Shellvoide / KLUE team. Each entry links to
           the upstream advisory; CVE IDs are shown once assigned.
         </p>
-        <p className="mt-3 text-sm font-medium text-gray-500">
+        <p className="mt-3 text-sm font-medium text-gray-500 dark:text-gray-400">
           {totalCves} CVEs · {pendingCount} pending · {advisories.length} packages
         </p>
       </div>
@@ -232,14 +232,16 @@ export default function ResearchAdvisoriesPage() {
           const assigned = pkg.cves.filter(isAssigned).length
           const pending = pkg.cves.length - assigned
           return (
-            <section key={pkg.name} className="rounded-3xl bg-gray-50 p-6 sm:p-8">
+            <section key={pkg.name} className="rounded-3xl bg-gray-50 p-6 sm:p-8 dark:bg-gray-900">
               <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
                 <div className="flex items-center gap-3">
-                  <h2 className="text-xl font-bold tracking-tight text-gray-900">{pkg.name}</h2>
-                  <span className="rounded-full border border-gray-200 bg-white px-2.5 py-0.5 text-xs font-medium text-gray-500">
+                  <h2 className="text-xl font-bold tracking-tight text-gray-900 dark:text-gray-100">
+                    {pkg.name}
+                  </h2>
+                  <span className="rounded-full border border-gray-200 bg-white px-2.5 py-0.5 text-xs font-medium text-gray-500 dark:border-gray-800 dark:bg-gray-950 dark:text-gray-400">
                     {pkg.ecosystem}
                   </span>
-                  <span className="text-xs font-medium text-gray-400">
+                  <span className="text-xs font-medium text-gray-400 dark:text-gray-500">
                     {[
                       assigned > 0 ? `${assigned} CVE${assigned === 1 ? '' : 's'}` : null,
                       pending > 0 ? `${pending} pending` : null,
@@ -251,7 +253,7 @@ export default function ResearchAdvisoriesPage() {
                 {pkg.writeup && (
                   <Link
                     href={pkg.writeup}
-                    className="text-primary-600 hover:text-primary-700 inline-flex items-center gap-1.5 text-sm font-semibold"
+                    className="text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 inline-flex items-center gap-1.5 text-sm font-semibold"
                   >
                     Read the writeup
                     <span aria-hidden>→</span>
@@ -259,7 +261,7 @@ export default function ResearchAdvisoriesPage() {
                 )}
               </div>
 
-              <ul className="mt-5 divide-y divide-gray-200">
+              <ul className="mt-5 divide-y divide-gray-200 dark:divide-gray-800">
                 {pkg.cves.map((c) => (
                   <li
                     key={c.advisory ?? c.id}
@@ -267,14 +269,14 @@ export default function ResearchAdvisoriesPage() {
                   >
                     <Link
                       href={cveLink(c)}
-                      className="text-primary-700 hover:text-primary-800 font-mono text-sm font-semibold"
+                      className="text-primary-700 dark:text-primary-400 hover:text-primary-800 dark:hover:text-primary-300 font-mono text-sm font-semibold"
                     >
                       {c.id}
-                      <span aria-hidden className="ml-1 text-gray-400">
+                      <span aria-hidden className="ml-1 text-gray-400 dark:text-gray-500">
                         ↗
                       </span>
                     </Link>
-                    <p className="text-sm leading-6 text-gray-600">{c.desc}</p>
+                    <p className="text-sm leading-6 text-gray-600 dark:text-gray-400">{c.desc}</p>
                   </li>
                 ))}
               </ul>

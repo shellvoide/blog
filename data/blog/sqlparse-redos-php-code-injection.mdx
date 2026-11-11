@@ -24,6 +24,22 @@ tags:
 draft: false
 layout: PostSimple
 canonicalUrl: 'https://shellvoide.com/blog/sqlparse-redos-php-code-injection'
+system: 'sqlparse (PyPI)'
+advisories:
+  - id: 'GHSA-3r5h-5jcg-gmgg'
+    url: 'https://github.com/andialbrecht/sqlparse/security/advisories/GHSA-3r5h-5jcg-gmgg'
+    label: 'ReDoS in the formatter'
+    severity: 'High'
+    affected: '<= 0.6.0'
+    fixed: '0.6.1'
+  - id: 'GHSA-xmww-55xg-h3vc'
+    cve: 'CVE-2026-112307'
+    url: 'https://github.com/andialbrecht/sqlparse/security/advisories/GHSA-xmww-55xg-h3vc'
+    label: 'PHP code injection'
+    severity: 'Medium'
+    score: 6.2
+    affected: '<= 0.6.0'
+    fixed: '0.6.1'
 ---
 
 > [!NOTE]

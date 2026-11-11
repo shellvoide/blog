@@ -24,6 +24,24 @@ tags:
 draft: false
 layout: PostSimple
 canonicalUrl: 'https://shellvoide.com/blog/hydra-untrusted-config-rce'
+system: 'hydra-core (PyPI)'
+advisories:
+  - id: 'GHSA-rqx7-p7vv-w7hr'
+    cve: 'CVE-2026-106442'
+    url: 'https://github.com/hydra-ecosystem/hydra/security/advisories/GHSA-rqx7-p7vv-w7hr'
+    label: 'instantiate() blocklist bypass'
+    severity: 'High'
+    score: 7.8
+    affected: '< 1.3.6, 1.4.0.dev0 to dev8'
+    fixed: '1.3.6, 1.4.0.dev9'
+  - id: 'GHSA-c3wx-c55w-pxjq'
+    cve: 'CVE-2026-106441'
+    url: 'https://github.com/hydra-ecosystem/hydra/security/advisories/GHSA-c3wx-c55w-pxjq'
+    label: 'Code execution via logging config'
+    severity: 'High'
+    score: 7.8
+    affected: '< 1.3.6, 1.4.0.dev0 to dev8'
+    fixed: '1.3.6, 1.4.0.dev9'
 ---
 
 Hydra is the configuration framework that a big slice of the Python machine-learning world runs on. It lets you describe an app or an experiment in YAML, compose that config from many pieces, and override anything from the command line. It is convenient, and it is also powerful in a way that matters for security: a Hydra config can name a Python callable and tell Hydra to go build it. That is the whole point of `instantiate()`, and it is why configs are not just data. They are instructions.
@@ -34,21 +52,21 @@ The short version: if your application loads a Hydra config you do not fully tru
 
 ## At a glance
 
-| | |
-| --- | --- |
-| **Package** | [`hydra-core`](https://pypi.org/project/hydra-core/) (PyPI) |
-| **CVEs** | [CVE-2026-106442](https://github.com/hydra-ecosystem/hydra/security/advisories/GHSA-rqx7-p7vv-w7hr) (blocklist bypass), [CVE-2026-106441](https://github.com/hydra-ecosystem/hydra/security/advisories/GHSA-c3wx-c55w-pxjq) (logging config) |
-| **Criticality** | High, CVSS 7.8, for both |
-| **Affected** | `< 1.3.6`, and `1.4.0.dev0` through `1.4.0.dev8` |
-| **Fixed in** | [`1.3.6`](https://pypi.org/project/hydra-core/1.3.6/) and `1.4.0.dev9` |
-| **Impact** | Arbitrary code execution when an app loads an untrusted config |
-| **Advisories** | [GHSA-rqx7-p7vv-w7hr](https://github.com/hydra-ecosystem/hydra/security/advisories/GHSA-rqx7-p7vv-w7hr) (CVE-2026-106442), [GHSA-c3wx-c55w-pxjq](https://github.com/hydra-ecosystem/hydra/security/advisories/GHSA-c3wx-c55w-pxjq) (CVE-2026-106441) |
-| **Discovered by** | KLUE, Shellvoide's autonomous security agent |
+|                   |                                                                                                                                                                                                                                                      |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Package**       | [`hydra-core`](https://pypi.org/project/hydra-core/) (PyPI)                                                                                                                                                                                          |
+| **CVEs**          | [CVE-2026-106442](https://github.com/hydra-ecosystem/hydra/security/advisories/GHSA-rqx7-p7vv-w7hr) (blocklist bypass), [CVE-2026-106441](https://github.com/hydra-ecosystem/hydra/security/advisories/GHSA-c3wx-c55w-pxjq) (logging config)         |
+| **Criticality**   | High, CVSS 7.8, for both                                                                                                                                                                                                                             |
+| **Affected**      | `< 1.3.6`, and `1.4.0.dev0` through `1.4.0.dev8`                                                                                                                                                                                                     |
+| **Fixed in**      | [`1.3.6`](https://pypi.org/project/hydra-core/1.3.6/) and `1.4.0.dev9`                                                                                                                                                                               |
+| **Impact**        | Arbitrary code execution when an app loads an untrusted config                                                                                                                                                                                       |
+| **Advisories**    | [GHSA-rqx7-p7vv-w7hr](https://github.com/hydra-ecosystem/hydra/security/advisories/GHSA-rqx7-p7vv-w7hr) (CVE-2026-106442), [GHSA-c3wx-c55w-pxjq](https://github.com/hydra-ecosystem/hydra/security/advisories/GHSA-c3wx-c55w-pxjq) (CVE-2026-106441) |
+| **Discovered by** | KLUE, Shellvoide's autonomous security agent                                                                                                                                                                                                         |
 
-| #   | CVE             | Finding                                            | The boundary it got around                                   | Severity   |
-| --- | --------------- | -------------------------------------------------- | ------------------------------------------------------------ | ---------- |
-| 1   | CVE-2026-106442 | `instantiate()` blocklist bypass                   | Slips through gaps in the `_target_` blocklist               | High (7.8) |
-| 2   | CVE-2026-106441 | Code execution through the logging config          | Runs through `dictConfig`, a path the blocklist never covers | High (7.8) |
+| #   | CVE             | Finding                                   | The boundary it got around                                   | Severity   |
+| --- | --------------- | ----------------------------------------- | ------------------------------------------------------------ | ---------- |
+| 1   | CVE-2026-106442 | `instantiate()` blocklist bypass          | Slips through gaps in the `_target_` blocklist               | High (7.8) |
+| 2   | CVE-2026-106441 | Code execution through the logging config | Runs through `dictConfig`, a path the blocklist never covers | High (7.8) |
 
 ## How it was found
 
@@ -111,7 +129,7 @@ _target_: pickle.loads
 _args_:
   - _target_: base64.b64decode
     _args_:
-      - "gASV...base64 of a malicious pickle..."
+      - 'gASV...base64 of a malicious pickle...'
 ```
 
 <ReasoningTrace
@@ -160,8 +178,8 @@ So an attacker who can influence the logging config, through a config group, a d
 version: 1
 handlers:
   console:
-    "()": subprocess.Popen
-    args: "id"
+    '()': subprocess.Popen
+    args: 'id'
     shell: true
 root:
   handlers: [console]

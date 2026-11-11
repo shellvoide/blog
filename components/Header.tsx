@@ -4,11 +4,12 @@ import Link from './Link'
 import NavLinks from './NavLinks'
 import MobileNav from './MobileNav'
 import SearchButton from './SearchButton'
+import ThemeSwitch from './ThemeSwitch'
 
 const Header = () => {
   return (
     <header className="sticky top-0 z-50 px-4 pt-4">
-      <div className="mx-auto flex max-w-3xl items-center justify-between gap-4 rounded-full border border-gray-200/70 bg-white/80 px-4 py-2.5 shadow-sm backdrop-blur-md sm:px-5 xl:max-w-5xl">
+      <div className="mx-auto flex max-w-3xl items-center justify-between gap-4 rounded-full border border-gray-200/70 bg-white/80 px-4 py-2.5 shadow-sm backdrop-blur-md sm:px-5 xl:max-w-5xl dark:border-gray-800 dark:bg-gray-950/80">
         <Link
           href="/"
           aria-label="Shellvoide Blog"
@@ -22,9 +23,9 @@ const Header = () => {
             priority
             className="h-8 w-auto"
           />
-          <span className="text-xl font-bold tracking-tight text-gray-900">
-            Shellvoide <span className="mx-0.5 font-light text-gray-300">|</span>{' '}
-            <span className="font-medium text-gray-500">Blog</span>
+          <span className="text-xl font-bold tracking-tight text-gray-900 dark:text-gray-100">
+            Shellvoide <span className="mx-0.5 font-light text-gray-300 dark:text-gray-600">|</span>{' '}
+            <span className="font-medium text-gray-500 dark:text-gray-400">Blog</span>
           </span>
         </Link>
 
@@ -32,6 +33,8 @@ const Header = () => {
           <NavLinks />
 
           <SearchButton />
+
+          <ThemeSwitch />
 
           <Link
             href="https://shellvoide.com/book"

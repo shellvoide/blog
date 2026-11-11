@@ -23,19 +23,45 @@ tags:
 draft: false
 layout: PostSimple
 canonicalUrl: 'https://shellvoide.com/blog/kin-openapi-three-dos-bugs'
+system: 'kin-openapi (Go)'
+advisories:
+  - id: 'GHSA-g8cf-rcjf-c8cf'
+    cve: 'CVE-2026-100354'
+    url: 'https://github.com/getkin/kin-openapi/security/advisories/GHSA-g8cf-rcjf-c8cf'
+    label: 'Circular allOf recursion'
+    severity: 'High'
+    score: 7.5
+    affected: 'through v0.144.0'
+    fixed: 'v0.149.0'
+  - id: 'GHSA-vrcc-3ch7-hppw'
+    cve: 'CVE-2026-100353'
+    url: 'https://github.com/getkin/kin-openapi/security/advisories/GHSA-vrcc-3ch7-hppw'
+    label: 'nil-items panic'
+    severity: 'High'
+    score: 7.5
+    affected: 'through v0.144.0'
+    fixed: 'v0.149.0'
+  - id: 'GHSA-rj39-cv6w-8wv7'
+    cve: 'CVE-2026-100352'
+    url: 'https://github.com/getkin/kin-openapi/security/advisories/GHSA-rj39-cv6w-8wv7'
+    label: 'YAML NaN/Inf panic'
+    severity: 'High'
+    score: 7.5
+    affected: 'through v0.144.0'
+    fixed: 'v0.148.0'
 ---
 
 ## At a glance
 
-| | |
-| --- | --- |
-| **Package** | `github.com/getkin/kin-openapi` (Go) |
-| **CVEs** | CVE-2026-100352, CVE-2026-100353, CVE-2026-100354 |
-| **Criticality** | High, CVSS 7.5, for all three |
-| **Affected** | through `v0.144.0` (the version tested) |
-| **Fixed in** | `v0.148.0` (YAML `NaN`/`Inf`) and `v0.149.0` (circular recursion and nil-`items`) |
-| **Impact** | Unauthenticated, single-request denial of service (full process crash) |
-| **Discovered by** | KLUE, Shellvoide's autonomous security agent |
+|                   |                                                                                   |
+| ----------------- | --------------------------------------------------------------------------------- |
+| **Package**       | `github.com/getkin/kin-openapi` (Go)                                              |
+| **CVEs**          | CVE-2026-100352, CVE-2026-100353, CVE-2026-100354                                 |
+| **Criticality**   | High, CVSS 7.5, for all three                                                     |
+| **Affected**      | through `v0.144.0` (the version tested)                                           |
+| **Fixed in**      | `v0.148.0` (YAML `NaN`/`Inf`) and `v0.149.0` (circular recursion and nil-`items`) |
+| **Impact**        | Unauthenticated, single-request denial of service (full process crash)            |
+| **Discovered by** | KLUE, Shellvoide's autonomous security agent                                      |
 
 Most denial-of-service bugs are loud. Point a fuzzer at a parser, throw a million malformed inputs at it, and sooner or later something falls over. The three in this post are the opposite kind. They are quiet. Each one hides behind a guard the library had already written, sitting on a code path that guard never reached, and the only way to see it is to read the whole validation pipeline and ask an awkward question about every check you walk past.
 
@@ -47,10 +73,10 @@ kin-openapi is not a target that falls over. It has been hardened by years of re
 
 Here is the slate KLUE walked away with:
 
-| #   | CVE             | Denial-of-service finding                          | The guard that existed, and where it was missing                               | Severity   |
-| --- | --------------- | -------------------------------------------------- | ------------------------------------------------------------------------------ | ---------- |
-| 1   | CVE-2026-100354 | Uncontrolled recursion on circular `allOf` schemas | Spec-time `validate()` detects cycles; the runtime validators do not           | High (7.5) |
-| 2   | CVE-2026-100353 | nil-`items` panic in `openapi3filter`              | A prior fix guarded three decoder paths; three more reach the same sink        | High (7.5) |
+| #   | CVE             | Denial-of-service finding                          | The guard that existed, and where it was missing                                     | Severity   |
+| --- | --------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------ | ---------- |
+| 1   | CVE-2026-100354 | Uncontrolled recursion on circular `allOf` schemas | Spec-time `validate()` detects cycles; the runtime validators do not                 | High (7.5) |
+| 2   | CVE-2026-100353 | nil-`items` panic in `openapi3filter`              | A prior fix guarded three decoder paths; three more reach the same sink              | High (7.5) |
 | 3   | CVE-2026-100352 | YAML `NaN`/`Inf` panic on OAS 3.1                  | The built-in visitor rejects `NaN`/`Inf`; the 3.1 dispatch hands it straight through | High (7.5) |
 
 All three are reachable by an unauthenticated client with a single crafted request, and all three were reproduced end to end against `v0.144.0`, the latest release at the time of testing.
