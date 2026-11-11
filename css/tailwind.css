@@ -1,5 +1,5 @@
 @import 'tailwindcss';
-@plugin "@tailwindcss/forms";
+@plugin '@tailwindcss/forms';
 @plugin '@tailwindcss/typography';
 @source '../node_modules/pliny';
 @custom-variant dark (&:where(.dark, .dark *));
@@ -7,7 +7,8 @@
 /* Core theme configuration */
 @theme {
   /* Font families */
-  --font-sans: var(--font-space-grotesk), ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji',
+  --font-sans:
+    var(--font-space-grotesk), ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji',
     'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
 
   /* Colors */
@@ -29,13 +30,13 @@
   --color-gray-50: oklch(0.982 0.004 168);
   --color-gray-100: oklch(0.962 0.006 165);
   --color-gray-200: oklch(0.925 0.009 163);
-  --color-gray-300: oklch(0.870 0.013 162);
+  --color-gray-300: oklch(0.87 0.013 162);
   --color-gray-400: oklch(0.705 0.018 160);
-  --color-gray-500: oklch(0.548 0.020 162);
+  --color-gray-500: oklch(0.548 0.02 162);
   --color-gray-600: oklch(0.443 0.018 164);
   --color-gray-700: oklch(0.345 0.015 165);
   /* border: hsl(155,15%,15%) */
-  --color-gray-800: oklch(0.240 0.013 167);
+  --color-gray-800: oklch(0.24 0.013 167);
   /* muted:  hsl(160,10%,12%) */
   --color-gray-900: oklch(0.148 0.012 162);
   /* surface: hsl(155,15%,10%) */
@@ -63,7 +64,6 @@
   color utility to any element that depends on these defaults.
 */
 @layer base {
-
   *,
   ::after,
   ::before,
@@ -118,9 +118,9 @@
     }
 
     & pre {
-      background-color: var(--color-gray-100);
-      color: var(--color-gray-900);
-      border: 1px solid var(--color-gray-300);
+      background-color: #0d1513;
+      color: rgb(224, 232, 238);
+      border: 1px solid var(--color-gray-800);
       border-radius: 0.65rem;
       box-shadow: 0 10px 24px -20px rgba(15, 23, 42, 0.65);
     }
@@ -162,9 +162,9 @@
     }
 
     & pre {
-      background-color: var(--color-gray-900);
-      color: var(--color-gray-100);
-      border: 1px solid var(--color-gray-700);
+      background-color: #0d1513;
+      color: rgb(224, 232, 238);
+      border: 1px solid var(--color-gray-800);
       border-radius: 0.65rem;
       box-shadow: 0 12px 30px -20px rgba(0, 0, 0, 0.9);
     }
@@ -267,4 +267,272 @@ input:-webkit-autofill:focus {
 .linkicon {
   display: inline-block;
   vertical-align: middle;
+}
+
+/* ---------- Article page ---------- */
+
+/* Anchored headings stop below the sticky header instead of behind it */
+.prose :where(h2, h3, h4)[id] {
+  scroll-margin-top: 6.5rem;
+}
+
+/* Dotted texture behind the post header */
+.post-hero-dots {
+  background-image:
+    radial-gradient(var(--color-primary-200) 1px, transparent 1px),
+    radial-gradient(var(--color-gray-200) 1px, transparent 1px);
+  background-size:
+    26px 26px,
+    26px 26px;
+  background-position:
+    0 0,
+    13px 13px;
+  -webkit-mask-image: radial-gradient(ellipse 70% 72% at 28% 0%, black, transparent 72%);
+  mask-image: radial-gradient(ellipse 70% 72% at 28% 0%, black, transparent 72%);
+}
+
+.dark .post-hero-dots {
+  background-image:
+    radial-gradient(
+      color-mix(in srgb, var(--color-primary-500) 28%, transparent) 1px,
+      transparent 1px
+    ),
+    radial-gradient(var(--color-gray-800) 1px, transparent 1px);
+}
+
+/* ---------- Code blocks: language bar, copy button, dark surface ---------- */
+.prose .code-block {
+  margin: 1.75em 0;
+  overflow: hidden;
+  border: 1px solid oklch(0.3 0.015 165);
+  border-radius: 0.9rem;
+  background: #0d1513;
+  box-shadow: 0 22px 44px -30px rgb(3 12 9 / 0.75);
+}
+
+.code-block-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.4rem 0.55rem 0.4rem 1rem;
+  background: #121c19;
+  border-bottom: 1px solid oklch(0.28 0.014 165);
+}
+
+.code-block-lang {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: rgb(150 166 162);
+}
+
+.code-block-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.55rem;
+  border-radius: 0.5rem;
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: rgb(150 166 162);
+  transition:
+    color 0.15s,
+    background-color 0.15s;
+}
+
+.code-block-copy:hover {
+  color: #fff;
+  background: rgb(255 255 255 / 0.07);
+}
+
+.prose .code-block pre {
+  margin: 0;
+  padding: 1rem 1rem 1.1rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: rgb(224 232 238);
+  font-size: 0.85rem;
+  line-height: 1.7;
+}
+
+/* Slim scrollbar that sits inside the dark surface instead of the white OS bar */
+.prose .code-block pre {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(255 255 255 / 0.16) transparent;
+}
+
+.prose .code-block pre:hover {
+  scrollbar-color: rgb(255 255 255 / 0.28) transparent;
+}
+
+.prose .code-block pre::-webkit-scrollbar {
+  height: 8px;
+}
+
+.prose .code-block pre::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.prose .code-block pre::-webkit-scrollbar-thumb {
+  border: 2px solid #0d1513;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.16);
+}
+
+.remark-code-title + .code-block {
+  margin-top: 0;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
+/* ---------- Callouts ----------
+   Set the way a printed book sets an aside: a hairline rule, slightly smaller type and a
+   bold run-in lead, with no panel, icon or badge. TIP and NOTE already open with their own
+   lead ("In everyday terms."), so the generated title is dropped. WARNING, CAUTION and
+   IMPORTANT get theirs back as a run-in word ("Warning.") in front of the first sentence. */
+.prose div.markdown-alert {
+  --rule: var(--color-gray-300);
+  margin: 2em 0;
+  padding: 0.1rem 0 0.1rem 1.35rem;
+  border: 0;
+  border-left: 1.5px solid var(--rule);
+  border-radius: 0;
+  background: none;
+  color: var(--color-gray-600);
+  font-size: 0.96em;
+}
+
+.prose div.markdown-alert.markdown-alert-tip {
+  --rule: var(--color-primary-400);
+}
+.prose div.markdown-alert.markdown-alert-warning,
+.prose div.markdown-alert.markdown-alert-important {
+  --rule: oklch(0.8 0.15 75);
+}
+.prose div.markdown-alert.markdown-alert-caution {
+  --rule: oklch(0.68 0.19 27);
+}
+
+.prose div.markdown-alert :where(strong) {
+  color: var(--color-gray-900);
+}
+
+.prose div.markdown-alert.markdown-alert-note .markdown-alert-title,
+.prose div.markdown-alert.markdown-alert-tip .markdown-alert-title {
+  display: none;
+}
+
+/* run-in lead: the generated title is "WARNING", shown as "Warning." on the same line */
+.prose div.markdown-alert .markdown-alert-title {
+  display: inline-block;
+  margin: 0 0.3em 0 0 !important;
+  font-size: inherit;
+  font-weight: 600;
+  line-height: inherit;
+  color: var(--color-gray-900);
+  text-transform: lowercase;
+}
+
+.prose div.markdown-alert .markdown-alert-title::first-letter {
+  text-transform: uppercase;
+}
+
+.prose div.markdown-alert .markdown-alert-title::after {
+  content: '.';
+}
+
+.prose div.markdown-alert .markdown-alert-title svg.octicon {
+  display: none;
+}
+
+.prose div.markdown-alert .markdown-alert-title + p {
+  display: inline;
+}
+
+.prose div.markdown-alert p {
+  margin: 0.5em 0;
+}
+
+.prose div.markdown-alert > p:first-child {
+  margin-top: 0;
+}
+
+.prose div.markdown-alert > :last-child {
+  margin-bottom: 0;
+}
+
+.prose div.markdown-alert ul {
+  margin: 0.6em 0 0;
+  padding-left: 1.1rem;
+}
+
+.prose div.markdown-alert li {
+  margin: 0.35em 0;
+  padding-left: 0.2rem;
+}
+
+.prose div.markdown-alert li::marker {
+  color: var(--color-gray-400);
+}
+
+.dark .prose div.markdown-alert {
+  --rule: var(--color-gray-700);
+  color: var(--color-gray-400);
+}
+.dark .prose div.markdown-alert.markdown-alert-tip {
+  --rule: var(--color-primary-700);
+}
+.dark .prose div.markdown-alert.markdown-alert-warning,
+.dark .prose div.markdown-alert.markdown-alert-important {
+  --rule: oklch(0.62 0.12 75);
+}
+.dark .prose div.markdown-alert.markdown-alert-caution {
+  --rule: oklch(0.58 0.16 27);
+}
+.dark .prose div.markdown-alert :where(strong),
+.dark .prose div.markdown-alert .markdown-alert-title {
+  color: var(--color-gray-100);
+}
+
+/* A callout that opens the post sits right under the header */
+.prose > div.markdown-alert:first-child {
+  margin-top: 0;
+}
+
+/* Advisory posts carry a NOTE near the top that lists the advisory facts. The table under the
+   title now carries those facts, so the duplicate box is hidden there (the post text is unchanged). */
+.has-advisory-table .prose > div.markdown-alert-note:first-of-type {
+  display: none;
+}
+
+/* ---------- Closing call to action (an italic line after a final divider) ---------- */
+.prose > hr:has(+ p:last-child) {
+  display: none;
+}
+
+.prose > hr + p:last-child {
+  margin-top: 3.25rem;
+  padding: 1.25rem 1.5rem;
+  border: 1px solid var(--color-primary-200);
+  border-radius: 1rem;
+  background: linear-gradient(135deg, var(--color-primary-50), transparent 75%);
+  color: var(--color-gray-700);
+}
+
+.prose > hr + p:last-child em {
+  font-style: normal;
+}
+
+.dark .prose > hr + p:last-child {
+  border-color: color-mix(in srgb, var(--color-primary-500) 30%, transparent);
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--color-primary-500) 12%, transparent),
+    transparent 75%
+  );
+  color: var(--color-gray-300);
 }
